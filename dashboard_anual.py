@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Dashboard de Indicadores (areas comercial y administrativa) - Grupo Diforma SAS (Odoo 19)
+Dashboard de Indicadores (areas comercial, administrativa y de diseno) - Grupo Diforma SAS (Odoo 19)
 
 Uso:
     python dashboard_anual.py               # año actual
     python dashboard_anual.py --anio 2025   # otro año
 
 Incluye los indicadores del area comercial (ver indicadores_comercial.py y metas_comercial.json)
-y los del area administrativa (indicadores_admin.py y metas_admin.json).
+los del area administrativa (indicadores_admin.py y metas_admin.json) y los del area de diseno
+(indicadores_diseno.py y metas_diseno.json).
 Genera un unico archivo HTML (informes/dashboard_indicadores_AAAA.html) que se abre en el
 navegador, sin internet y sin instalar nada. Permite elegir mes a mes, ver el acumulado
 del año, filtrar por empresa y cambiar entre USD y COP.
@@ -30,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import informe_ventas as iv  # noqa: E402
 import indicadores_comercial as ic  # noqa: E402
 import indicadores_admin as ia  # noqa: E402
+import indicadores_diseno as idg  # noqa: E402
 
 
 def codificar(serie, nombres=None):
@@ -89,6 +91,11 @@ def construir_datos(odoo, anio):
     except (RuntimeError, requests.RequestException, OSError, ValueError, KeyError) as e:
         avisos.append("No se pudieron calcular los indicadores del area administrativa: " + str(e)[:200])
         datos["adm"] = None
+    try:
+        datos["dis"] = idg.calcular(odoo, anio, idg.cargar_config(), avisos)
+    except (RuntimeError, requests.RequestException, OSError, ValueError, KeyError) as e:
+        avisos.append("No se pudieron calcular los indicadores del area de diseno: " + str(e)[:200])
+        datos["dis"] = None
     return datos, avisos
 
 
@@ -157,9 +164,10 @@ svg text{font-family:Segoe UI,Arial,sans-serif}
 .ed input{width:92px;border:1px solid #c9d3da;border-radius:6px;padding:4px 6px;font-size:13px;text-align:right}
 .ed input.mod{background:#fff4d6;border-color:#e0b43c}.ed{background:#f4f7f9;border-radius:8px;padding:10px 12px;margin:8px 0;overflow-x:auto}
 .ed td,.ed th{text-align:center}.ed td:first-child,.ed th:first-child{text-align:left}
-.ind.adm{grid-template-columns:repeat(4,1fr)}.ic .l small{font-weight:400;color:#666}
+.ind.adm{grid-template-columns:repeat(4,1fr)}.ind.dis{grid-template-columns:repeat(5,1fr)}.ic .l small{font-weight:400;color:#666}
 .ant{font-size:13px;margin:8px 0}.ant td,.ant th{padding:4px 8px}
-@media(max-width:760px){.ind,.ind.adm{grid-template-columns:1fr 1fr}}
+@media(max-width:900px){.ind.dis{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:760px){.ind,.ind.adm,.ind.dis{grid-template-columns:1fr 1fr}}
 @media(max-width:760px){.kpis{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
 .tabs{display:flex;gap:4px;margin:14px 0 0;border-bottom:2px solid #e5e5e5;flex-wrap:wrap}
 .tab{border:0;background:none;padding:10px 18px;font-size:15px;cursor:pointer;color:#456;border-bottom:3px solid transparent;margin-bottom:-2px}
@@ -208,6 +216,12 @@ pueden diferir por el efecto de la TRM. Fuente: Odoo 19, solo lectura.</div>
 <div class="small" style="margin:4px 0"><button class="chip" id="btn_metas_adm">✎ Editar metas</button> <span class="muted" id="adm_est"></span></div>
 <div id="adm_edit" style="display:none"></div>
 <div id="adm_root"></div>
+</section>
+<section id="tab_dis" style="display:none">
+<h2 id="t_dis">Indicadores del área de Diseño</h2>
+<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas_dis">✎ Editar metas</button> <span class="muted" id="dis_est"></span></div>
+<div id="dis_edit" style="display:none"></div>
+<div id="dis_root"></div>
 </section>
 </div>
 <script type="application/json" id="datos">__DATOS__</script>
@@ -275,7 +289,7 @@ function updateCtrl(){
   document.querySelectorAll('#ctrl .chip').forEach(b => b.classList.toggle('on', +b.dataset.m===st.mes));
   document.querySelectorAll('#monseg button').forEach(b => b.classList.toggle('on', b.dataset.c===st.mon));
 }
-const TABS=[['com','Indicadores Área Comercial'],['adm','Indicadores Área Administrativa']];
+const TABS=[['com','Indicadores Área Comercial'],['adm','Indicadores Área Administrativa'],['dis','Indicadores Área Diseño']];
 function renderTabs(){
   const el=document.getElementById('tabs');
   el.innerHTML=TABS.map(t => '<button class="tab" data-t="'+t[0]+'">'+t[1]+'</button>').join('');
@@ -285,6 +299,7 @@ function updateTabs(){
   document.querySelectorAll('#tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.t===st.tab));
   document.getElementById('tab_com').style.display = st.tab==='com' ? '' : 'none';
   document.getElementById('tab_adm').style.display = st.tab==='adm' ? '' : 'none';
+  document.getElementById('tab_dis').style.display = st.tab==='dis' ? '' : 'none';
 }
 
 function renderKpis(){
@@ -776,10 +791,196 @@ function renderAdmEdit(){
   document.getElementById('adm_reset').onclick = () => {AMETA=Object.assign({},ADEF); ABIEN=ABDEF.slice(); refresh(); renderAdmEdit();};
 }
 
+// ================= ÁREA DISEÑO =================
+const DK=['efectividad','eficiencia','devueltos','destacados','ia'];
+const DNAMES={efectividad:'Efectividad',eficiencia:'Eficiencia',devueltos:'Proyectos devueltos',destacados:'Proyectos destacados',ia:'Proyectos IA'};
+const DDESC={efectividad:'Diseños vendidos / presentados',eficiencia:'Proyectos con novedades / presentados',devueltos:'Diseños devueltos / presentados',
+  destacados:'Diseños destacados / presentados',ia:'Dato manual (no sale de Odoo)'};
+const DFORM={
+  efectividad:'Diseños vendidos ÷ diseños presentados × 100. Presentado = brief con “Fecha entrega real Diseño” en el mes; vendido = brief que pasa a la etapa Ganado en el mes. Mayor es mejor.',
+  eficiencia:'Proyectos presentados en el mes que tienen al menos una novedad (letra distinta de A: 17573-B, -C…) ÷ proyectos presentados en el mes × 100. Un proyecto sin novedades se logró al primer intento; con varias novedades, el diseño no se aproximó rápido a la expectativa del cliente. Menor es mejor. Nota: la hoja la define como promedio de novedades por proyecto y sus valores no se pudieron reproducir desde Odoo.',
+  devueltos:'Veces que un brief vuelve a la etapa Diseño desde una etapa posterior (Presentación, Presupuesto, Cotización o Ganado) ÷ diseños presentados × 100. Menor es mejor.',
+  destacados:'Diseños presentados en el mes marcados como “Diseño destacado” ÷ diseños presentados × 100. Mayor es mejor.',
+  ia:'Diseños desarrollados con IA ÷ diseños presentados. No sale de Odoo (no hay etiqueta ni campo): se digita en “Editar metas”. Mayor es mejor.'};
+let DMETA=null, DDEF=null, DIA=null, DIADEF=null, DKEY='';
+st.dind='efectividad';
+
+const disOk = () => !!(D.dis && D.dis.ok);
+function disNombres(){return st.emp<0 ? D.dis.empresas : [D.empresas[st.emp]].filter(n => D.dis.m[n]);}
+const disK = () => Math.min(st.mes>0 ? st.mes : D.dis.ultimo, D.dis.ultimo)-1;
+function disRango(){const k=disK(); return st.mes>0 ? [k,k] : [Math.max(D.dis.desde-1,0), D.dis.ultimo-1];}
+function disSum(a,b,c){
+  let s=0; disNombres().forEach(n => {const arr=D.dis.m[n][c]; for(let j=a;j<=b;j++) s+=(arr[j]||0);}); return s;
+}
+function disVal(a,b){
+  const c={pres:disSum(a,b,'pres'),vend:disSum(a,b,'vend'),dev:disSum(a,b,'dev'),dest:disSum(a,b,'dest'),py:disSum(a,b,'py'),pyn:disSum(a,b,'pyn')};
+  const r=(x,y)=> y>0 ? x/y*100 : null;
+  let ia=null;
+  if(a===b) ia=(DIA[a]===undefined ? null : DIA[a]);
+  else {const w=DIA.slice(a,b+1).filter(x => x!==null && x!==undefined); ia=w.length ? w.reduce((p,q)=>p+q,0)/w.length : null;}
+  return {efectividad:r(c.vend,c.pres), eficiencia:r(c.pyn,c.py), devueltos:r(c.dev,c.pres), destacados:r(c.dest,c.pres), ia:ia, comp:c};
+}
+function disColor(i,v){
+  if(v===null||v===undefined||isNaN(v)) return 'n';
+  const m=DMETA[i], A=D.dis;
+  if(A.tipo[i]==='min') return v>=m ? 'g' : (v>=m*A.amarillo_min ? 'y' : 'r');
+  return v<=m ? 'g' : (v<=m*A.amarillo_max ? 'y' : 'r');
+}
+const disFmt = (i,v) => (v===null||v===undefined||isNaN(v)) ? '—' : nf.format(Math.round(v))+'%';
+const disEsDiforma = () => st.emp>=0 && /diforma/i.test(D.empresas[st.emp]||'');
+
+function disChart(i){
+  const A=D.dis, n=A.ultimo, W=960, H=250, ml=62, mr=24, mt=26, mb=32, iw=W-ml-mr, ih=H-mt-mb;
+  const vals=[], cols=[];
+  for(let j=0;j<n;j++){const w=disVal(j,j)[i]; vals.push(w); cols.push(disColor(i,w));}
+  const meta=DMETA[i], fin=vals.filter(v => v!==null && v!==undefined && isFinite(v));
+  const mx=Math.max(meta*1.3, ...fin, 10), mn=0;
+  const x=j => ml+iw/12*(j+.5), y=v => mt+ih-(v-mn)/(mx-mn)*ih;
+  let g='<svg viewBox="0 0 '+W+' '+H+'" width="100%">';
+  for(let t=0;t<=4;t++){const v=mn+(mx-mn)*t/4, yy=mt+ih-ih*t/4;
+    g+='<line x1="'+ml+'" x2="'+(W-mr)+'" y1="'+yy+'" y2="'+yy+'" stroke="#e5e5e5"/><text x="'+(ml-8)+'" y="'+(yy+4)+'" text-anchor="end" font-size="11" fill="#666">'+nf.format(Math.round(v))+'%</text>';}
+  const ym=y(meta);
+  g+='<line x1="'+ml+'" x2="'+(W-mr)+'" y1="'+ym+'" y2="'+ym+'" stroke="#e08e45" stroke-width="2" stroke-dasharray="6 4"/><text x="'+(W-mr)+'" y="'+(ym-5)+'" text-anchor="end" font-size="11" fill="#b8651b">Meta '+(A.tipo[i]==='min'?'≥ ':'≤ ')+disFmt(i,meta)+'</text>';
+  const pts=[]; vals.forEach((v,j) => {if(v!==null && v!==undefined && isFinite(v)) pts.push([x(j),y(v)]);});
+  if(pts.length>1) g+='<polyline points="'+pts.map(p=>p.join(',')).join(' ')+'" fill="none" stroke="#9aa5ad" stroke-width="2"/>';
+  const ks=disK();
+  for(let j=0;j<12;j++){
+    g+='<text x="'+x(j)+'" y="'+(H-mb+18)+'" text-anchor="middle" font-size="12" fill="'+(j===ks&&st.mes>0?'#b8651b':'#444')+'" font-weight="'+(j===ks&&st.mes>0?700:400)+'">'+MC[j]+'</text>';
+    const v=vals[j]; if(v===null||v===undefined||!isFinite(v)) continue;
+    g+='<circle cx="'+x(j)+'" cy="'+y(v)+'" r="'+(j===ks&&st.mes>0?7:5)+'" fill="'+COL[cols[j]]+'" stroke="'+(j===ks&&st.mes>0?'#14213d':'#fff')+'" stroke-width="'+(j===ks&&st.mes>0?2.5:1.5)+'"/>'+
+       '<text x="'+x(j)+'" y="'+(y(v)-10)+'" text-anchor="middle" font-size="11" fill="#333">'+disFmt(i,v)+'</text>'+
+       '<rect class="dhit" data-m="'+(j+1)+'" x="'+(x(j)-iw/24)+'" y="'+mt+'" width="'+(iw/12)+'" height="'+(ih+mb)+'" fill="transparent"><title>'+ML[j]+': '+disFmt(i,v)+'</title></rect>';
+  }
+  return g+'</svg>';
+}
+function disCompTable(i){
+  const defs={
+    efectividad:[['Presentados',c=>nf.format(c.pres)],['Vendidos',c=>nf.format(c.vend)]],
+    eficiencia:[['Proyectos presentados',c=>nf.format(c.py)],['Con novedades',c=>nf.format(c.pyn)]],
+    devueltos:[['Presentados',c=>nf.format(c.pres)],['Devoluciones',c=>nf.format(c.dev)]],
+    destacados:[['Presentados',c=>nf.format(c.pres)],['Destacados',c=>nf.format(c.dest)]],
+    ia:[]};
+  const cols=defs[i]; if(!cols.length) return '';
+  let h='<h3>Cómo se calcula mes a mes</h3><div class="ed"><table><thead><tr><th>Mes</th>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'<th>'+DNAMES[i]+'</th></tr></thead><tbody>';
+  for(let j=Math.max(D.dis.desde-1,0); j<D.dis.ultimo; j++){const v=disVal(j,j);
+    h+='<tr data-m="'+(j+1)+'" class="'+(st.mes>0&&j===disK()?'sel':'')+'"><td>'+ML[j]+'</td>'+cols.map(c=>'<td>'+c[1](v.comp)+'</td>').join('')+'<td><span class="pill '+disColor(i,v[i])+'">'+disFmt(i,v[i])+'</span></td></tr>';}
+  return h+'</tbody></table></div>';
+}
+function dTbl(heads,rows){
+  if(!rows.length) return '<div class="muted small">Sin registros.</div>';
+  return '<div class="ed"><table><thead><tr>'+heads.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+
+    rows.map(r => '<tr>'+r.map((c,j)=>'<td'+(j===0?' style="text-align:left"':'')+'>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+}
+function disDet(k){
+  const o={pres:[],vend:[],dev:[],nov:[]};
+  disNombres().forEach(n => {const d=((D.dis.det[n]||{})[k])||{}; ['pres','vend','dev','nov'].forEach(f => {o[f]=o[f].concat(d[f]||[]);});});
+  return o;
+}
+function disDisenadores(a,b){
+  const m=new Map();
+  disNombres().forEach(n => {const d=D.dis.disen[n]||{};
+    Object.keys(d).forEach(nm => {let r=m.get(nm); if(!r){r={pres:0,vend:0,dev:0}; m.set(nm,r);}
+      ['pres','vend','dev'].forEach(f => {for(let j=a;j<=b;j++) r[f]+=(d[nm][f][j]||0);});});});
+  return [...m.entries()].filter(e => e[1].pres+e[1].vend+e[1].dev>0).sort((p,q) => q[1].pres-p[1].pres);
+}
+function disDetalle(i,k,rg){
+  const d=disDet(k), mesTxt=ML[k]+' '+D.anio, nota = st.mes>0 ? '' : ' <span class="muted small">(último mes con datos; elija un mes arriba para ver otro)</span>';
+  const lim = '<div class="muted small">Se muestran hasta 60 registros por empresa y mes.</div>';
+  let h='';
+  if(i!=='ia'){
+    const dz=disDisenadores(rg[0],rg[1]);
+    h+='<div class="dsec"><h3>Por diseñador · '+(st.mes>0? mesTxt : 'acumulado del año')+'</h3>'+
+      dTbl(['Diseñador','Presentados','Vendidos','Devoluciones'], dz.map(e => [esc(e[0]),nf.format(e[1].pres),nf.format(e[1].vend),nf.format(e[1].dev)]))+'</div>';
+  }
+  if(i==='efectividad'){
+    h+='<div class="dsec"><h3>Vendidos en '+mesTxt+nota+'</h3>'+dTbl(['Brief','Cliente','Diseñador','Fecha'], d.vend.map(r => [esc(r[0]),esc(r[1]),esc(r[2]),esc(r[3])]))+'</div>'+
+       '<div class="dsec"><h3>Presentados en '+mesTxt+'</h3>'+dTbl(['Brief','Cliente','Diseñador','Etapa actual'], d.pres.map(r => [esc(r[0]),esc(r[1]),esc(r[2]),esc(r[3])]))+lim+'</div>';
+  } else if(i==='eficiencia'){
+    h+='<div class="dsec"><h3>Proyectos presentados en '+mesTxt+' con novedades'+nota+'</h3>'+dTbl(['Proyecto (n.º)','Letras presentadas','Cliente'], d.nov.map(r => [esc(r[0]),esc(r[1]),esc(r[2])]))+lim+'</div>';
+  } else if(i==='devueltos'){
+    h+='<div class="dsec"><h3>Devoluciones en '+mesTxt+nota+'</h3>'+dTbl(['Brief','Venía de','Vuelve a','Fecha'], d.dev.map(r => [esc(r[0]),esc(r[1]),esc(r[2]),esc(r[3])]))+'</div>';
+  } else if(i==='destacados'){
+    h+='<div class="dsec"><h3>Diseños destacados presentados en '+mesTxt+nota+'</h3>'+dTbl(['Brief','Cliente','Diseñador'], d.pres.filter(r => r[4]===1).map(r => [esc(r[0]),esc(r[1]),esc(r[2])]))+lim+'</div>';
+  } else {
+    h+='<div class="dsec muted small">Este indicador se digita a mano: use “Editar metas” → fila de Proyectos IA para registrar el % de cada mes.</div>';
+  }
+  return h;
+}
+
+function renderDis(){
+  const root=document.getElementById('dis_root');
+  if(!disOk()){document.getElementById('t_dis').textContent='Indicadores del área de Diseño'; root.innerHTML='<div class="aviso">No hay datos del módulo Diforma Brief suficientes para este año.</div>'; return;}
+  const A=D.dis, ns=disNombres(), k=disK(), rg=disRango(), ent = st.emp<0 ? 'todas las empresas' : (D.empresas[st.emp]||'');
+  const per = st.mes>0 ? ML[k]+' '+D.anio : 'acumulado '+MC[rg[0]]+'–'+MC[rg[1]]+' '+D.anio;
+  document.getElementById('t_dis').textContent='Indicadores del área de Diseño · '+per+' · '+ent;
+  if(!ns.length){root.innerHTML='<div class="muted">Sin datos de Diseño para esta empresa.</div>'; return;}
+  const v=disVal(rg[0],rg[1]), c=v.comp, hj=A.hoja[String(k+1)], i=st.dind;
+  const base = {efectividad:[c.vend,c.pres,'vendidos de presentados'], eficiencia:[c.pyn,c.py,'proyectos con novedades de presentados'],
+    devueltos:[c.dev,c.pres,'devoluciones de presentados'], destacados:[c.dest,c.pres,'destacados de presentados']};
+  const refHoja = x => (st.mes>0 && hj && hj[x]!==undefined && disEsDiforma()) ? '<div class="small muted">Según la hoja: '+hj[x]+(hj[x]>100 ? '' : '%')+'</div>' : '';
+  let h='<div class="ind dis">';
+  DK.forEach(x => {
+    const val=v[x], cl=disColor(x,val), b=base[x];
+    h+='<div class="ic clk '+cl+(x===i?' selc':'')+'" data-i="'+x+'"><div class="l">'+DNAMES[x]+'</div><div class="p">'+disFmt(x,val)+'</div>'+
+       '<div class="small"><b>Meta</b> '+(A.tipo[x]==='min'?'≥ ':'≤ ')+disFmt(x,DMETA[x])+'</div>'+
+       '<div class="small muted">'+(b? nf.format(b[0])+' '+b[2] : DDESC[x])+'</div>'+refHoja(x)+'</div>';
+  });
+  h+='</div><div class="small muted" style="margin:-4px 0 8px">Haga clic en un indicador para ver su detalle.</div>';
+  const hjI = (st.mes>0 && hj && hj[i]!==undefined && disEsDiforma()) ? ' · según la hoja: '+hj[i]+(hj[i]>100?'':'%') : '';
+  h+='<div class="dp"><h2 class="h2s">'+DNAMES[i]+' · detalle de '+(st.mes>0? ML[k]+' '+D.anio : 'todo el año')+'</h2><div class="small muted">'+DFORM[i]+'<br>Meta '+(A.tipo[i]==='min'?'≥ ':'≤ ')+disFmt(i,DMETA[i])+' · valor '+disFmt(i,v[i])+hjI+'</div>'+
+     '<div style="margin-top:8px">'+disChart(i)+'</div>'+disCompTable(i)+disDetalle(i,k,rg)+'</div>';
+  h+='<h2>Resumen de los 5 indicadores por mes</h2>';
+  let t='<table><thead><tr><th>Mes</th>'+DK.map(x=>'<th title="'+DDESC[x]+'">'+DNAMES[x]+'</th>').join('')+'</tr></thead><tbody>';
+  for(let j=0;j<12;j++){
+    if(j>=A.ultimo || j<A.desde-1){t+='<tr><td>'+ML[j]+'</td>'+DK.map(()=>'<td><span class="pill n">—</span></td>').join('')+'</tr>'; continue;}
+    const w=disVal(j,j), hh=A.hoja[String(j+1)];
+    t+='<tr data-m="'+(j+1)+'" class="'+(st.mes>0&&j===k?'sel':'')+'"><td>'+ML[j]+'</td>'+DK.map(x => '<td><span class="pill '+disColor(x,w[x])+'">'+disFmt(x,w[x])+'</span>'+
+       ((hh && hh[x]!==undefined && disEsDiforma()) ? ' <span class="muted small">(hoja '+hh[x]+')</span>' : '')+'</td>').join('')+'</tr>';
+  }
+  h+=t+'</tbody></table>';
+  h+='<div class="small muted" style="margin-top:14px">Verde: cumple la meta; amarillo: hasta '+Math.round((A.amarillo_max-1)*100)+'% por encima de la meta (o al menos '+Math.round(A.amarillo_min*100)+'% en indicadores “mayor es mejor”); rojo: peor. '+
+    'Fuente: módulo Diforma Brief de Odoo (historial de etapas, fecha de entrega real de diseño, letra del proyecto y campo “Diseño destacado”). Presentado = brief con fecha de entrega real de diseño en el mes. '+
+    'Enero de 2026 no se muestra: es la carga inicial de datos y no tiene historial de etapas. En “Año completo” se acumulan los conteos de los meses (un mismo proyecto puede contarse en más de un mes). '+
+    'Las metas se pueden editar con “Editar metas”; los valores iniciales vienen de metas_diseno.json (hoja de indicadores).</div>';
+  root.innerHTML=h;
+  root.querySelectorAll('.ic[data-i]').forEach(e => e.onclick = () => {st.dind=e.dataset.i; renderDis();});
+  root.querySelectorAll('tr[data-m]').forEach(r => r.onclick = () => {st.mes=+r.dataset.m; render();});
+  root.querySelectorAll('.dhit').forEach(r => r.onclick = () => {st.mes=+r.dataset.m; render();});
+}
+function initDis(){
+  DKEY='diforma_metas_dis_'+D.anio;
+  document.getElementById('dis_edit').style.display='none';
+  if(!disOk()) return;
+  DMETA=Object.assign({},D.dis.meta); DDEF=Object.assign({},D.dis.meta);
+  DIA=D.dis.manual_ia.slice(); DIADEF=DIA.slice();
+  try{const sv=JSON.parse(localStorage.getItem(DKEY)||'null');
+    if(sv){DK.forEach(i => {if(sv.meta && typeof sv.meta[i]==='number' && sv.meta[i]>=0) DMETA[i]=sv.meta[i];});
+      if(Array.isArray(sv.ia)) sv.ia.forEach((x,j) => {if(j<12 && (x===null||typeof x==='number')) DIA[j]=x;});}}catch(e){}
+}
+const disCambios = () => DK.some(i => DMETA[i]!==DDEF[i]) || DIA.some((x,j) => x!==DIADEF[j]);
+function disEst(){document.getElementById('dis_est').textContent = !disOk()? '' : (disCambios() ? 'Metas/datos modificados a mano (guardados en este navegador).' : 'Metas de la hoja de indicadores.');}
+function disSave(){try{localStorage.setItem(DKEY, JSON.stringify({meta:DMETA, ia:DIA}));}catch(e){}}
+function renderDisEdit(){
+  const el=document.getElementById('dis_edit');
+  let h='<div class="ed"><div class="small muted" style="margin-bottom:6px">Escriba la meta (en %) y el dashboard se actualiza al instante. Los cambios se guardan en este navegador; para dejarlos permanentes edite metas_diseno.json. Las celdas amarillas difieren de la hoja.</div><table><thead><tr><th>Indicador</th><th>Meta (%)</th><th>Criterio</th></tr></thead><tbody>';
+  DK.forEach(i => {h+='<tr><td>'+DNAMES[i]+'</td><td><input type="number" step="any" min="0" data-m="'+i+'" value="'+DMETA[i]+'" class="'+(DMETA[i]!==DDEF[i]?'mod':'')+'"></td><td class="small muted">'+(D.dis.tipo[i]==='min'?'cumple si es mayor o igual':'cumple si es menor o igual')+'</td></tr>';});
+  h+='</tbody></table><div class="small muted" style="margin:10px 0 4px">Proyectos IA (% de diseños desarrollados con IA, dato manual por mes)</div><table><thead><tr>'+MC.map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody><tr>'+
+     DIA.map((x,j) => '<td><input type="number" step="any" min="0" data-b="'+j+'" value="'+(x===null||x===undefined?'':x)+'" class="'+(x!==DIADEF[j]?'mod':'')+'" style="width:56px"></td>').join('')+'</tr></tbody></table>'+
+     '<div style="margin-top:8px"><button class="chip" id="dis_reset">Restablecer valores de la hoja</button></div></div>';
+  el.innerHTML=h;
+  const refresh=()=>{disSave(); disEst(); renderDis();};
+  el.querySelectorAll('input[data-m]').forEach(inp => inp.oninput = () => {
+    const v=parseFloat(inp.value); if(isNaN(v)||v<0) return; DMETA[inp.dataset.m]=v; inp.classList.toggle('mod', v!==DDEF[inp.dataset.m]); refresh();});
+  el.querySelectorAll('input[data-b]').forEach(inp => inp.oninput = () => {
+    const j=+inp.dataset.b, v=inp.value===''?null:parseFloat(inp.value); if(v!==null&&(isNaN(v)||v<0)) return; DIA[j]=v; inp.classList.toggle('mod', v!==DIADEF[j]); refresh();});
+  document.getElementById('dis_reset').onclick = () => {DMETA=Object.assign({},DDEF); DIA=DIADEF.slice(); refresh(); renderDisEdit();};
+}
+
 function render(){
   compute(); updateCtrl(); updateTabs();
   if(st.tab==='com'){renderKpis(); renderInd(); renderChart(); renderRankings(); renderTabla();}
-  else renderAdm();
+  else if(st.tab==='adm') renderAdm();
+  else renderDis();
 }
 function defaultEmp(){
   const i=D.empresas.findIndex(e => /diforma/i.test(e) && !/disenni/i.test(e));
@@ -790,7 +991,7 @@ function setAnio(a){
   if(st.empName===null) st.emp=defaultEmp(); else st.emp=D.empresas.indexOf(st.empName);
   if(st.emp>=0) st.empName=D.empresas[st.emp]; else if(st.empName===null) st.empName='';
   if(st.mes>12) st.mes=0;
-  renderCtrl(); initAdm(); render();
+  renderCtrl(); initAdm(); initDis(); disEst(); render();
 }
 document.querySelectorAll('#monseg button').forEach(b => b.onclick = () => {st.mon=b.dataset.c; render();});
 document.getElementById('btn_metas').onclick = () => {
@@ -802,6 +1003,11 @@ document.getElementById('btn_metas_adm').onclick = () => {
   if(!admOk()) return;
   const e=document.getElementById('adm_edit'), ab=e.style.display==='none';
   e.style.display=ab?'':'none'; if(ab) renderAdmEdit();
+};
+document.getElementById('btn_metas_dis').onclick = () => {
+  if(!disOk()) return;
+  const e=document.getElementById('dis_edit'), ab=e.style.display==='none';
+  e.style.display=ab?'':'none'; if(ab) renderDisEdit();
 };
 renderTabs();
 setAnio(MULTI.anio_defecto);

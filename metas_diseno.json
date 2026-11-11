@@ -1,0 +1,42 @@
+{
+  "_ayuda": "Metas y umbrales del area de Diseno (hoja 'Indicadores Area (Diseno)'). Edite los valores y vuelva a generar el dashboard; tambien se pueden ajustar a mano en el dashboard con el boton 'Editar metas' (se guardan solo en ese navegador). 'tipo': max = menor es mejor, min = mayor es mejor.",
+  "metas": {
+    "efectividad": 40,
+    "eficiencia": 50,
+    "devueltos": 15,
+    "destacados": 50,
+    "ia": 30
+  },
+  "tipo": {
+    "efectividad": "min",
+    "eficiencia": "max",
+    "devueltos": "max",
+    "destacados": "min",
+    "ia": "min"
+  },
+  "amarillo_max": 1.25,
+  "amarillo_min": 0.7,
+  "_nota_umbrales": "Verde: cumple la meta. Amarillo: hasta 25% por encima de la meta (indicadores 'max') o al menos 70% de la meta (indicadores 'min'). Rojo: peor. La hoja no define estos umbrales; son supuestos, ajustelos aqui.",
+  "_nota_metas": "Metas vigentes de la hoja (desde oct 2025): efectividad >40%, eficiencia <50%, destacados >50%, devueltos <15%, IA >30%. En enero de 2026 la hoja usaba efectividad >30%.",
+  "desde": {"2026": 2},
+  "_nota_desde": "Primer mes con datos validos por ano. En Odoo, enero de 2026 es la carga inicial de datos (mas de 5.100 briefs el 2026-01-04, sin historial de etapas), por eso se muestra desde febrero.",
+  "manual": {
+    "ia": {
+      "2026": [null, null, null, null, null, 13, 5, 6, 7, 7, null, null]
+    }
+  },
+  "_nota_manual": "Proyectos IA no sale de Odoo (no hay etiqueta ni campo): % de disenos presentados desarrollados con IA. Valores de la hoja (jun-oct 2026). Edite aqui o a mano en el dashboard.",
+  "hoja": {
+    "2026-01": {"efectividad": 18, "eficiencia": 63, "destacados": 0, "devueltos": 0},
+    "2026-02": {"efectividad": 30, "eficiencia": 48, "destacados": 0, "devueltos": 15},
+    "2026-03": {"efectividad": 21, "eficiencia": 67, "destacados": 0, "devueltos": 4},
+    "2026-04": {"efectividad": 31, "eficiencia": 41, "destacados": 0, "devueltos": 2},
+    "2026-05": {"efectividad": 34, "eficiencia": 60, "destacados": 0, "devueltos": 0},
+    "2026-06": {"efectividad": 32, "eficiencia": 67, "ia": 13},
+    "2026-07": {"efectividad": 16, "eficiencia": 28, "ia": 5},
+    "2026-08": {"efectividad": 16, "eficiencia": 27, "ia": 6},
+    "2026-09": {"efectividad": 36, "eficiencia": 66, "ia": 7},
+    "2026-10": {"efectividad": 34, "eficiencia": 67, "ia": 7}
+  },
+  "_nota_hoja": "Referencia: lo que dice la hoja de Google cada mes. Algunos valores de la hoja vienen como conteo sin % (por ejemplo eficiencia 41 y devueltos 2 en abril); se muestran tal cual. En marzo-octubre la hoja define Eficiencia como promedio de novedades por proyecto y no se pudo reproducir desde Odoo; el dashboard usa % de proyectos presentados con al menos una novedad."
+}

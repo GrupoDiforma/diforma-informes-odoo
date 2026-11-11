@@ -19,6 +19,7 @@ concurrency:
 jobs:
   construir:
     runs-on: ubuntu-latest
+    environment: github-pages   # los Secrets ODOO_* estan guardados en este entorno
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

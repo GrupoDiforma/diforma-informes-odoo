@@ -1,0 +1,98 @@
+{
+  "_ayuda": "Metas y reglas del area de Produccion (hoja 'Indicadores Area (Produccion)'). Edite los valores y vuelva a generar el dashboard; tambien se pueden ajustar a mano en el dashboard con el boton 'Editar metas' (se guardan solo en ese navegador). 'tipo': max = menor es mejor, min = mayor es mejor.",
+  "metas": {
+    "garantias": 100,
+    "proveedores": 100,
+    "eficiencia": 5,
+    "costo_garantias": 0
+  },
+  "tipo": {
+    "garantias": "min",
+    "proveedores": "min",
+    "eficiencia": "min",
+    "costo_garantias": "max"
+  },
+  "amarillo_max": 1.25,
+  "amarillo_min": 0.7,
+  "_nota_umbrales": "Verde: cumple la meta. Amarillo: al menos 70% de la meta (indicadores 'min'). Rojo: peor. La hoja no define estos umbrales; son supuestos, ajustelos aqui. 'costo_garantias' es informativo: no se pinta con semaforo.",
+  "_nota_metas": "Hoja: Cero garantias = (proyectos ejecutados - garantias) / proyectos ejecutados, meta 100%. Proveedor de servicios = proveedores nuevos, meta 100% (1 por periodo). Eficiencia en el costo = (costo proyectado - costo real) / costo proyectado, meta de ahorro de al menos 5% (la columna de meta de la hoja dice -9%, y la descripcion dice 5%; se uso 5% por decision de Diforma).",
+  "categorias_excluidas": [
+    "Venta",
+    "Servicio Exportacion"
+  ],
+  "_nota_categorias": "Categorias (cuentas analiticas hijas del plan de cada proyecto) que NO cuentan como costo real: son ventas contabilizadas, no costo.",
+  "min_costo_proyectado": 100000,
+  "requiere_costo_real": true,
+  "_nota_eficiencia": "En la eficiencia solo entran los proyectos ejecutados con costo proyectado de al menos 'min_costo_proyectado' (hay briefs con valores simbolicos de $600 o $1.000) y con costo real mayor que cero (sin costo real el ahorro seria 100% falso). Los excluidos se listan en el detalle.",
+  "prov_por_mes": 1,
+  "_nota_prov": "Proveedores: la hoja calcula (proveedor nuevo / un periodo) x 100: 1 nuevo = 100%, 2 = 200%. Con 'prov_por_mes' = 1 se reproduce esa regla. Odoo cuenta proveedores cuya PRIMERA factura de proveedor en Odoo lleva distribucion analitica a proyectos; el dato oficial se puede digitar en 'Editar metas' (tiene prioridad sobre Odoo).",
+  "desde": {
+    "2026": 2
+  },
+  "prov_desde": {
+    "2026": 3
+  },
+  "_nota_desde": "Primer mes con datos validos por ano. Odoo solo tiene datos desde enero de 2026 (asiento de apertura y carga inicial), por eso se muestra desde febrero; en proveedores desde marzo, porque en enero y febrero todos los proveedores existentes aparecerian como 'nuevos'.",
+  "manual": {
+    "proveedores": {
+      "2026": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  "_nota_manual": "Proveedores nuevos de servicios digitados a mano (opcional). Si un mes tiene valor aqui, tiene prioridad sobre el conteo de Odoo (proveedores que facturan a proyectos por primera vez). Se deja vacio para ver el conteo de Odoo; la hoja se muestra solo como referencia.",
+  "hoja": {
+    "2026-02": {
+      "garantias": 100,
+      "proveedores": 100
+    },
+    "2026-03": {
+      "garantias": 100,
+      "proveedores": 0
+    },
+    "2026-04": {
+      "garantias": 91.7,
+      "proveedores": 200,
+      "eficiencia": 0.6
+    },
+    "2026-05": {
+      "garantias": 100,
+      "proveedores": 500,
+      "eficiencia": 2.1
+    },
+    "2026-06": {
+      "garantias": 100,
+      "proveedores": 100,
+      "eficiencia": 13.0
+    },
+    "2026-07": {
+      "garantias": 100,
+      "proveedores": 100,
+      "eficiencia": 8.5
+    },
+    "2026-08": {
+      "garantias": 100,
+      "proveedores": 100,
+      "eficiencia": 37.9
+    },
+    "2026-09": {
+      "garantias": 88.9,
+      "proveedores": 0,
+      "eficiencia": 54.1
+    }
+  },
+  "_nota_hoja": "Referencia: lo que dice la hoja de Google cada mes. Hasta marzo la eficiencia se calculaba con otra formula (proyectado/real x 100) y no es comparable, por eso solo se muestra desde abril. En julio la hoja dice 8,5% pero con sus propias cifras ($8,8 M proyectado y $5,34 M real) resulta 39,3%. Las cifras de la hoja se digitan por proyectos que elige el responsable; Odoo no las reproduce exactamente (ver diagnostico).",
+  "factor_apunte_anomalo": 3.0,
+  "min_real_pct_proy": 0.1
+}

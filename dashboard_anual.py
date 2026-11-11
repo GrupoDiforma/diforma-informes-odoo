@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dashboard de Indicadores (areas comercial, administrativa y de diseno) - Grupo Diforma SAS (Odoo 19)
+Dashboard de Indicadores (areas comercial, administrativa, de diseno y de produccion) - Grupo Diforma SAS (Odoo 19)
 
 Uso:
     python dashboard_anual.py               # año actual
@@ -32,6 +32,7 @@ import informe_ventas as iv  # noqa: E402
 import indicadores_comercial as ic  # noqa: E402
 import indicadores_admin as ia  # noqa: E402
 import indicadores_diseno as idg  # noqa: E402
+import indicadores_produccion as ipr  # noqa: E402
 
 
 def codificar(serie, nombres=None):
@@ -96,6 +97,11 @@ def construir_datos(odoo, anio):
     except (RuntimeError, requests.RequestException, OSError, ValueError, KeyError) as e:
         avisos.append("No se pudieron calcular los indicadores del area de diseno: " + str(e)[:200])
         datos["dis"] = None
+    try:
+        datos["pro"] = ipr.calcular(odoo, anio, ipr.cargar_config(), avisos)
+    except (RuntimeError, requests.RequestException, OSError, ValueError, KeyError) as e:
+        avisos.append("No se pudieron calcular los indicadores del area de produccion: " + str(e)[:200])
+        datos["pro"] = None
     return datos, avisos
 
 
@@ -223,6 +229,12 @@ pueden diferir por el efecto de la TRM. Fuente: Odoo 19, solo lectura.</div>
 <div id="dis_edit" style="display:none"></div>
 <div id="dis_root"></div>
 </section>
+<section id="tab_pro" style="display:none">
+<h2 id="t_pro">Indicadores del área de Producción</h2>
+<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas_pro">✎ Editar metas</button> <span class="muted" id="pro_est"></span></div>
+<div id="pro_edit" style="display:none"></div>
+<div id="pro_root"></div>
+</section>
 </div>
 <script type="application/json" id="datos">__DATOS__</script>
 <script>
@@ -289,7 +301,7 @@ function updateCtrl(){
   document.querySelectorAll('#ctrl .chip').forEach(b => b.classList.toggle('on', +b.dataset.m===st.mes));
   document.querySelectorAll('#monseg button').forEach(b => b.classList.toggle('on', b.dataset.c===st.mon));
 }
-const TABS=[['com','Indicadores Área Comercial'],['adm','Indicadores Área Administrativa'],['dis','Indicadores Área Diseño']];
+const TABS=[['com','Indicadores Área Comercial'],['adm','Indicadores Área Administrativa'],['dis','Indicadores Área Diseño'],['pro','Indicadores Área Producción']];
 function renderTabs(){
   const el=document.getElementById('tabs');
   el.innerHTML=TABS.map(t => '<button class="tab" data-t="'+t[0]+'">'+t[1]+'</button>').join('');
@@ -300,6 +312,7 @@ function updateTabs(){
   document.getElementById('tab_com').style.display = st.tab==='com' ? '' : 'none';
   document.getElementById('tab_adm').style.display = st.tab==='adm' ? '' : 'none';
   document.getElementById('tab_dis').style.display = st.tab==='dis' ? '' : 'none';
+  document.getElementById('tab_pro').style.display = st.tab==='pro' ? '' : 'none';
 }
 
 function renderKpis(){
@@ -976,10 +989,190 @@ function renderDisEdit(){
   document.getElementById('dis_reset').onclick = () => {DMETA=Object.assign({},DDEF); DIA=DIADEF.slice(); refresh(); renderDisEdit();};
 }
 
+// ================= ÁREA PRODUCCIÓN =================
+const PK=['garantias','proveedores','eficiencia','costo_garantias'];
+const PNAMES={garantias:'Cero garantías',proveedores:'Proveedor de servicios',eficiencia:'Eficiencia en el costo',costo_garantias:'Costo de garantías'};
+const PDESC={garantias:'(Ejecutados − garantías) / ejecutados',proveedores:'Proveedores nuevos que facturan a proyectos',
+  eficiencia:'(Costo proyectado − costo real) / proyectado',costo_garantias:'Costo real de los proyectos en garantía'};
+const PFORM={
+  garantias:'(Proyectos ejecutados − garantías) ÷ proyectos ejecutados × 100. Ejecutado = proyecto de tipo Producción o Prototipo Facturable, contado en el mes de su primera factura de cliente contabilizada. Garantía = brief aprobado de tipo Garantía, contado en el mes en que se crea. Mayor es mejor: 100% significa cero garantías.',
+  proveedores:'Proveedores nuevos ÷ meta de proveedores del periodo × 100 (1 nuevo = 100%, 2 = 200%, como en la hoja). Odoo cuenta proveedores cuya primera factura de proveedor en Odoo lleva distribución analítica a proyectos, en el mes de esa factura. Si se digita el dato oficial en “Editar metas”, ese valor tiene prioridad. Mayor es mejor.',
+  eficiencia:'(Costo proyectado − costo real) ÷ costo proyectado × 100 de los proyectos ejecutados en el mes. Proyectado = “Costo Proyectado” × cantidad de los briefs aprobados; real = suma neta del plan analítico del proyecto sin las categorías Venta y Servicio Exportación. Solo entran proyectos con proyectado mínimo y con costo real; los demás se listan aparte. Mayor ahorro es mejor.',
+  costo_garantias:'Costo real (COP) acumulado en el plan analítico de los proyectos de tipo Garantía creados en el mes (sin Venta ni Servicio Exportación). Es informativo: no tiene meta ni semáforo.'};
+let PMETA=null, PDEF=null, PMAN=null, PMANDEF=null, PKEY='';
+st.pind='garantias';
+
+const proOk = () => !!(D.pro && D.pro.ok);
+const proK = () => Math.min(st.mes>0 ? st.mes : D.pro.ultimo, D.pro.ultimo)-1;
+function proRango(){const k=proK(); return st.mes>0 ? [k,k] : [Math.max(D.pro.desde-1,0), D.pro.ultimo-1];}
+function proSum(a,b,c){const arr=D.pro.m[c]; let s=0; for(let j=a;j<=b;j++) s+=(arr[j]||0); return s;}
+function proVal(a,b){
+  const c={ejec:proSum(a,b,'ejec'),gar:proSum(a,b,'gar'),nefi:proSum(a,b,'nefi'),proy:proSum(a,b,'proy'),real:proSum(a,b,'real'),gcosto:proSum(a,b,'gcosto')};
+  let nuevos=0, meses=0, dig=0;
+  for(let j=a;j<=b;j++){
+    const man=PMAN[j];
+    if(man!==null && man!==undefined){nuevos+=man; meses++; dig++;}
+    else if(j+1>=D.pro.desde_prov && j+1<=D.pro.ultimo){nuevos+=(D.pro.m.prov[j]||0); meses++;}
+  }
+  c.prov=nuevos; c.mesesp=meses; c.dig=dig;
+  const r=(x,y)=> y>0 ? x/y*100 : null;
+  return {garantias:r(c.ejec-c.gar,c.ejec), proveedores: meses>0 ? nuevos/(meses*D.pro.prov_por_mes)*100 : null,
+          eficiencia:r(c.proy-c.real,c.proy), costo_garantias:c.gcosto, comp:c};
+}
+function proColor(i,v){
+  if(i==='costo_garantias' || v===null||v===undefined||isNaN(v)) return 'n';
+  const m=PMETA[i], A=D.pro;
+  if(A.tipo[i]==='min') return v>=m ? 'g' : (v>=m*A.amarillo_min ? 'y' : 'r');
+  return v<=m ? 'g' : (v<=m*A.amarillo_max ? 'y' : 'r');
+}
+const proMon = v => '$ '+nf.format(Math.round(v));
+const proFmt = (i,v) => (v===null||v===undefined||isNaN(v)) ? '—' : (i==='costo_garantias' ? proMon(v) : nf1.format(v)+'%');
+
+function proChart(i){
+  const A=D.pro, n=A.ultimo, W=960, H=250, ml=70, mr=24, mt=26, mb=32, iw=W-ml-mr, ih=H-mt-mb;
+  const esC=(i==='costo_garantias'), vals=[], cols=[];
+  const j0 = i==='proveedores' ? A.desde_prov-1 : A.desde-1;
+  for(let j=0;j<n;j++){const w=(j<j0) ? null : proVal(j,j)[i]; vals.push(w); cols.push(proColor(i,w));}
+  const meta=esC ? null : PMETA[i], fin=vals.filter(v => v!==null && v!==undefined && isFinite(v));
+  const mx=Math.max(meta===null?0:meta*1.3, ...fin, esC?1:10), mn=Math.min(0, ...fin);
+  const x=j => ml+iw/12*(j+.5), y=v => mt+ih-(v-mn)/(mx-mn)*ih;
+  const tk = v => esC ? abbr(v,'cop',false) : nf.format(Math.round(v))+'%';
+  let g='<svg viewBox="0 0 '+W+' '+H+'" width="100%">';
+  for(let t=0;t<=4;t++){const v=mn+(mx-mn)*t/4, yy=mt+ih-ih*t/4;
+    g+='<line x1="'+ml+'" x2="'+(W-mr)+'" y1="'+yy+'" y2="'+yy+'" stroke="#e5e5e5"/><text x="'+(ml-8)+'" y="'+(yy+4)+'" text-anchor="end" font-size="11" fill="#666">'+tk(v)+'</text>';}
+  if(!esC){const ym=y(meta);
+    g+='<line x1="'+ml+'" x2="'+(W-mr)+'" y1="'+ym+'" y2="'+ym+'" stroke="#e08e45" stroke-width="2" stroke-dasharray="6 4"/><text x="'+(W-mr)+'" y="'+(ym-5)+'" text-anchor="end" font-size="11" fill="#b8651b">Meta '+(A.tipo[i]==='min'?'≥ ':'≤ ')+proFmt(i,meta)+'</text>';}
+  const pts=[]; vals.forEach((v,j) => {if(v!==null && v!==undefined && isFinite(v)) pts.push([x(j),y(v)]);});
+  if(pts.length>1) g+='<polyline points="'+pts.map(p=>p.join(',')).join(' ')+'" fill="none" stroke="#9aa5ad" stroke-width="2"/>';
+  const ks=proK();
+  for(let j=0;j<12;j++){
+    g+='<text x="'+x(j)+'" y="'+(H-mb+18)+'" text-anchor="middle" font-size="12" fill="'+(j===ks&&st.mes>0?'#b8651b':'#444')+'" font-weight="'+(j===ks&&st.mes>0?700:400)+'">'+MC[j]+'</text>';
+    const v=vals[j]; if(v===null||v===undefined||!isFinite(v)) continue;
+    g+='<circle cx="'+x(j)+'" cy="'+y(v)+'" r="'+(j===ks&&st.mes>0?7:5)+'" fill="'+COL[cols[j]]+'" stroke="'+(j===ks&&st.mes>0?'#14213d':'#fff')+'" stroke-width="'+(j===ks&&st.mes>0?2.5:1.5)+'"/>'+
+       '<text x="'+x(j)+'" y="'+(y(v)-10)+'" text-anchor="middle" font-size="11" fill="#333">'+(esC?abbr(v,'cop',false):nf1.format(v)+'%')+'</text>'+
+       '<rect class="dhit" data-m="'+(j+1)+'" x="'+(x(j)-iw/24)+'" y="'+mt+'" width="'+(iw/12)+'" height="'+(ih+mb)+'" fill="transparent"><title>'+ML[j]+': '+proFmt(i,v)+'</title></rect>';
+  }
+  return g+'</svg>';
+}
+function proCompTable(i){
+  const defs={
+    garantias:[['Proyectos ejecutados',c=>nf.format(c.ejec)],['Garantías',c=>nf.format(c.gar)]],
+    proveedores:[['Proveedores nuevos',c=>nf.format(c.prov)],['Fuente',c=>c.dig>0?'digitado':'Odoo']],
+    eficiencia:[['Proyectos',c=>nf.format(c.nefi)],['Costo proyectado',c=>proMon(c.proy)],['Costo real',c=>proMon(c.real)]],
+    costo_garantias:[['Garantías',c=>nf.format(c.gar)]]};
+  const cols=defs[i];
+  let h='<h3>Cómo se calcula mes a mes</h3><div class="ed"><table><thead><tr><th>Mes</th>'+cols.map(c=>'<th>'+c[0]+'</th>').join('')+'<th>'+PNAMES[i]+'</th></tr></thead><tbody>';
+  const j0 = i==='proveedores' ? D.pro.desde_prov-1 : D.pro.desde-1;
+  for(let j=Math.max(j0,0); j<D.pro.ultimo; j++){const v=proVal(j,j);
+    h+='<tr data-m="'+(j+1)+'" class="'+(st.mes>0&&j===proK()?'sel':'')+'"><td>'+ML[j]+'</td>'+cols.map(c=>'<td>'+c[1](v.comp)+'</td>').join('')+'<td><span class="pill '+proColor(i,v[i])+'">'+proFmt(i,v[i])+'</span></td></tr>';}
+  return h+'</tbody></table></div>';
+}
+function proDet(k){return Object.assign({ejec:[],gar:[],prov:[],excl:[]}, (D.pro.det||{})[String(k)]||{});}
+function proDetalle(i,k){
+  const d=proDet(k), mesTxt=ML[k]+' '+D.anio, nota = st.mes>0 ? '' : ' <span class="muted small">(último mes con datos; elija un mes arriba para ver otro)</span>';
+  const lim='<div class="muted small">Se muestran hasta 80 registros por mes.</div>';
+  const gTbl='<div class="dsec"><h3>Garantías creadas en '+mesTxt+nota+'</h3>'+dTbl(['Brief','Cliente','Creada','Costo real'], d.gar.map(r => [esc(r[0]),esc(r[1]),esc(r[2]),proMon(r[3])]))+'</div>';
+  let h='';
+  if(i==='garantias'){
+    h+=gTbl+'<div class="dsec"><h3>Proyectos ejecutados (primera factura en '+mesTxt+')</h3>'+
+       dTbl(['Proyecto','Cliente','Tipo','Primera factura'], d.ejec.map(r => [esc(r[0]),esc(r[1]),esc(r[2]),esc(r[3])]))+lim+'</div>';
+  } else if(i==='proveedores'){
+    const man=PMAN[k];
+    h+='<div class="dsec"><h3>Proveedores cuya primera factura a proyectos fue en '+mesTxt+nota+'</h3>'+
+       dTbl(['Proveedor','Primera factura'], d.prov.map(r => [esc(r[0]),esc(r[1])]))+
+       '<div class="muted small">'+((man!==null&&man!==undefined)?'Este mes tiene el dato digitado a mano ('+nf.format(man)+'); prevalece sobre el conteo de Odoo.':'Se cuentan todos los proveedores de la lista; si solo algunos son de servicios, digite el dato oficial en “Editar metas”.')+'</div></div>';
+  } else if(i==='eficiencia'){
+    h+='<div class="dsec"><h3>Proyectos incluidos · primera factura en '+mesTxt+nota+'</h3>'+
+       dTbl(['Proyecto','Cliente','Costo proyectado','Costo real','Ahorro'], d.ejec.filter(r => r[7]===1).map(r => [esc(r[0]),esc(r[1]),proMon(r[4]),proMon(r[5]),(r[6]===null?'—':nf1.format(r[6])+'%')]))+lim+'</div>'+
+       '<div class="dsec"><h3>Proyectos ejecutados que no entran en la eficiencia</h3>'+
+       dTbl(['Proyecto','Cliente','Costo proyectado','Costo real','Motivo'], d.excl.map(r => [esc(r[0]),esc(r[1]),proMon(r[2]),proMon(r[3]),esc(r[4])]))+
+       '<div class="muted small">Se excluyen los de costo proyectado menor a '+proMon(D.pro.min_proy)+' (valores simbólicos) y los que aún no tienen costo real.</div></div>';
+  } else {
+    h+=gTbl;
+  }
+  return h;
+}
+
+function renderPro(){
+  const root=document.getElementById('pro_root');
+  if(!proOk()){document.getElementById('t_pro').textContent='Indicadores del área de Producción'; root.innerHTML='<div class="aviso">No hay datos suficientes de briefs aprobados y planes analíticos para este año.</div>'; return;}
+  const A=D.pro, k=proK(), rg=proRango();
+  const per = st.mes>0 ? ML[k]+' '+D.anio : 'acumulado '+MC[rg[0]]+'–'+MC[rg[1]]+' '+D.anio;
+  document.getElementById('t_pro').textContent='Indicadores del área de Producción · '+per;
+  const v=proVal(rg[0],rg[1]), c=v.comp, hj=A.hoja[String(k+1)], i=st.pind;
+  const refHoja = x => (st.mes>0 && hj && hj[x]!==undefined) ? '<div class="small muted">Según la hoja: '+nf1.format(hj[x])+'%</div>' : '';
+  const sub = {
+    garantias: nf.format(c.gar)+' garantías de '+nf.format(c.ejec)+' proyectos ejecutados',
+    proveedores: nf.format(c.prov)+' proveedores nuevos ('+(c.dig>0?'digitado':'Odoo')+')',
+    eficiencia: nf.format(c.nefi)+' proyectos · real '+proMon(c.real)+' de '+proMon(c.proy),
+    costo_garantias: nf.format(c.gar)+' garantías creadas'};
+  let h='<div class="ind adm">';
+  PK.forEach(x => {
+    const val=v[x], cl=proColor(x,val);
+    h+='<div class="ic clk '+cl+(x===i?' selc':'')+'" data-i="'+x+'"><div class="l">'+PNAMES[x]+'</div><div class="p">'+proFmt(x,val)+'</div>'+
+       '<div class="small">'+(x==='costo_garantias' ? 'Informativo (sin meta)' : '<b>Meta</b> '+(A.tipo[x]==='min'?'≥ ':'≤ ')+proFmt(x,PMETA[x]))+'</div>'+
+       '<div class="small muted">'+sub[x]+'</div>'+refHoja(x)+'</div>';
+  });
+  h+='</div><div class="small muted" style="margin:-4px 0 8px">Haga clic en un indicador para ver su detalle. Esta pestaña no depende del selector de empresa.</div>';
+  const hjI = (st.mes>0 && hj && hj[i]!==undefined) ? ' · según la hoja: '+nf1.format(hj[i])+'%' : '';
+  h+='<div class="dp"><h2 class="h2s">'+PNAMES[i]+' · detalle de '+(st.mes>0? ML[k]+' '+D.anio : 'todo el año')+'</h2><div class="small muted">'+PFORM[i]+'<br>'+
+     (i==='costo_garantias' ? 'Valor '+proFmt(i,v[i]) : 'Meta '+(A.tipo[i]==='min'?'≥ ':'≤ ')+proFmt(i,PMETA[i])+' · valor '+proFmt(i,v[i]))+hjI+'</div>'+
+     '<div style="margin-top:8px">'+proChart(i)+'</div>'+proCompTable(i)+proDetalle(i,k)+'</div>';
+  h+='<h2>Resumen de los indicadores por mes</h2>';
+  let t='<table><thead><tr><th>Mes</th>'+PK.map(x=>'<th title="'+PDESC[x]+'">'+PNAMES[x]+'</th>').join('')+'</tr></thead><tbody>';
+  for(let j=0;j<12;j++){
+    if(j>=A.ultimo || j<A.desde-1){t+='<tr><td>'+ML[j]+'</td>'+PK.map(()=>'<td><span class="pill n">—</span></td>').join('')+'</tr>'; continue;}
+    const w=proVal(j,j), hh=A.hoja[String(j+1)];
+    t+='<tr data-m="'+(j+1)+'" class="'+(st.mes>0&&j===k?'sel':'')+'"><td>'+ML[j]+'</td>'+PK.map(x => {
+      if(x==='proveedores' && j<A.desde_prov-1 && (PMAN[j]===null||PMAN[j]===undefined)) return '<td><span class="pill n">—</span></td>';
+      return '<td><span class="pill '+proColor(x,w[x])+'">'+proFmt(x,w[x])+'</span>'+((hh && hh[x]!==undefined) ? ' <span class="muted small">(hoja '+nf1.format(hh[x])+')</span>' : '')+'</td>';}).join('')+'</tr>';
+  }
+  h+=t+'</tbody></table>';
+  h+='<div class="small muted" style="margin-top:14px">Verde: cumple la meta; amarillo: al menos '+Math.round(A.amarillo_min*100)+'% de la meta; rojo: peor. '+
+    'Fuente: Brief Aprobados (tipo y costo proyectado), planes analíticos de proyecto (costo real, sin las categorías '+esc(A.excluidas.join(' y '))+'), facturas de cliente contabilizadas (mes de ejecución) y facturas de proveedor (proveedores nuevos). '+
+    'Solo cuentan los tipos Producción y Prototipo Facturable; Prototipo, Mantenimiento y Servicios quedan fuera. '+
+    'Odoo solo tiene datos desde enero de 2026: se muestra desde febrero (proveedores desde marzo). En “Año completo” se acumulan los conteos y las sumas de los meses. '+
+    'La hoja la digita el responsable proyecto por proyecto, y por eso sus cifras pueden no coincidir exactamente con Odoo. '+
+    'Las metas se pueden editar con “Editar metas”; los valores iniciales vienen de metas_produccion.json.</div>';
+  root.innerHTML=h;
+  root.querySelectorAll('.ic[data-i]').forEach(e => e.onclick = () => {st.pind=e.dataset.i; renderPro();});
+  root.querySelectorAll('tr[data-m]').forEach(r => r.onclick = () => {st.mes=+r.dataset.m; render();});
+  root.querySelectorAll('.dhit').forEach(r => r.onclick = () => {st.mes=+r.dataset.m; render();});
+}
+function initPro(){
+  PKEY='diforma_metas_pro_'+D.anio;
+  document.getElementById('pro_edit').style.display='none';
+  if(!proOk()) return;
+  PMETA=Object.assign({},D.pro.meta); PDEF=Object.assign({},D.pro.meta);
+  PMAN=D.pro.manual_prov.slice(); PMANDEF=PMAN.slice();
+  try{const sv=JSON.parse(localStorage.getItem(PKEY)||'null');
+    if(sv){PK.forEach(i => {if(sv.meta && typeof sv.meta[i]==='number' && sv.meta[i]>=0) PMETA[i]=sv.meta[i];});
+      if(Array.isArray(sv.prov)) sv.prov.forEach((x,j) => {if(j<12 && (x===null||typeof x==='number')) PMAN[j]=x;});}}catch(e){}
+}
+const proCambios = () => PK.some(i => PMETA[i]!==PDEF[i]) || PMAN.some((x,j) => x!==PMANDEF[j]);
+function proEst(){document.getElementById('pro_est').textContent = !proOk()? '' : (proCambios() ? 'Metas/datos modificados a mano (guardados en este navegador).' : 'Metas de la hoja de indicadores.');}
+function proSave(){try{localStorage.setItem(PKEY, JSON.stringify({meta:PMETA, prov:PMAN}));}catch(e){}}
+function renderProEdit(){
+  const el=document.getElementById('pro_edit');
+  let h='<div class="ed"><div class="small muted" style="margin-bottom:6px">Escriba la meta y el dashboard se actualiza al instante. Los cambios se guardan en este navegador; para dejarlos permanentes edite metas_produccion.json. Las celdas amarillas difieren de la hoja.</div><table><thead><tr><th>Indicador</th><th>Meta</th><th>Criterio</th></tr></thead><tbody>';
+  PK.filter(i => i!=='costo_garantias').forEach(i => {h+='<tr><td>'+PNAMES[i]+'</td><td><input type="number" step="any" min="0" data-m="'+i+'" value="'+PMETA[i]+'" class="'+(PMETA[i]!==PDEF[i]?'mod':'')+'"></td><td class="small muted">'+(D.pro.tipo[i]==='min'?'cumple si es mayor o igual':'cumple si es menor o igual')+' (en %)</td></tr>';});
+  h+='</tbody></table><div class="small muted" style="margin:10px 0 4px">Proveedores nuevos de servicios (dato oficial, opcional: cuántos fueron en el mes; si queda vacío se usa el conteo de Odoo)</div><table><thead><tr>'+MC.map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody><tr>'+
+     PMAN.map((x,j) => '<td><input type="number" step="any" min="0" data-b="'+j+'" value="'+(x===null||x===undefined?'':x)+'" class="'+(x!==PMANDEF[j]?'mod':'')+'" style="width:56px"></td>').join('')+'</tr></tbody></table>'+
+     '<div style="margin-top:8px"><button class="chip" id="pro_reset">Restablecer valores de la hoja</button></div></div>';
+  el.innerHTML=h;
+  const refresh=()=>{proSave(); proEst(); renderPro();};
+  el.querySelectorAll('input[data-m]').forEach(inp => inp.oninput = () => {
+    const v=parseFloat(inp.value); if(isNaN(v)||v<0) return; PMETA[inp.dataset.m]=v; inp.classList.toggle('mod', v!==PDEF[inp.dataset.m]); refresh();});
+  el.querySelectorAll('input[data-b]').forEach(inp => inp.oninput = () => {
+    const j=+inp.dataset.b, v=inp.value===''?null:parseFloat(inp.value); if(v!==null&&(isNaN(v)||v<0)) return; PMAN[j]=v; inp.classList.toggle('mod', v!==PMANDEF[j]); refresh();});
+  document.getElementById('pro_reset').onclick = () => {PMETA=Object.assign({},PDEF); PMAN=PMANDEF.slice(); refresh(); renderProEdit();};
+}
+
 function render(){
   compute(); updateCtrl(); updateTabs();
   if(st.tab==='com'){renderKpis(); renderInd(); renderChart(); renderRankings(); renderTabla();}
   else if(st.tab==='adm') renderAdm();
+  else if(st.tab==='pro') renderPro();
   else renderDis();
 }
 function defaultEmp(){
@@ -991,7 +1184,7 @@ function setAnio(a){
   if(st.empName===null) st.emp=defaultEmp(); else st.emp=D.empresas.indexOf(st.empName);
   if(st.emp>=0) st.empName=D.empresas[st.emp]; else if(st.empName===null) st.empName='';
   if(st.mes>12) st.mes=0;
-  renderCtrl(); initAdm(); initDis(); disEst(); render();
+  renderCtrl(); initAdm(); initDis(); disEst(); initPro(); proEst(); render();
 }
 document.querySelectorAll('#monseg button').forEach(b => b.onclick = () => {st.mon=b.dataset.c; render();});
 document.getElementById('btn_metas').onclick = () => {
@@ -1008,6 +1201,11 @@ document.getElementById('btn_metas_dis').onclick = () => {
   if(!disOk()) return;
   const e=document.getElementById('dis_edit'), ab=e.style.display==='none';
   e.style.display=ab?'':'none'; if(ab) renderDisEdit();
+};
+document.getElementById('btn_metas_pro').onclick = () => {
+  if(!proOk()) return;
+  const e=document.getElementById('pro_edit'), ab=e.style.display==='none';
+  e.style.display=ab?'':'none'; if(ab) renderProEdit();
 };
 renderTabs();
 setAnio(MULTI.anio_defecto);

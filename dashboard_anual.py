@@ -177,7 +177,9 @@ const nf = new Intl.NumberFormat('es-CO',{maximumFractionDigits:0});
 const nf1 = new Intl.NumberFormat('es-CO',{maximumFractionDigits:1});
 const pf = new Intl.NumberFormat('es-CO',{minimumFractionDigits:1,maximumFractionDigits:1});
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const st = {mes: D.mes_inicial, mon: 'usd', emp: -1};
+// Por defecto se muestra solo Grupo Diforma S.A.S (se puede cambiar a "Todas las empresas")
+const EMP_DEF = D.empresas.findIndex(e => e.toLowerCase().indexOf('grupo diforma') >= 0);
+const st = {mes: D.mes_inicial, mon: 'usd', emp: EMP_DEF};
 const OTRA = {usd:'cop', cop:'usd'};
 // fila r: [mes, emp, cli, ven, equ, pro, cat, fac, usd, cop]
 let M, P, RW;
@@ -220,7 +222,7 @@ function renderCtrl(){
   h += '<span class="sep"></span>';
   if(D.empresas.length>1){
     h += '<select id="emp"><option value="-1">Todas las empresas</option>' +
-         D.empresas.map((e,i) => '<option value="'+i+'">'+esc(e)+'</option>').join('') + '</select>';
+         D.empresas.map((e,i) => '<option value="'+i+'"'+(i===st.emp?' selected':'')+'>'+esc(e)+'</option>').join('') + '</select>';
   }
   h += '<span class="seg"><button data-c="usd">USD</button><button data-c="cop">COP</button></span>';
   const el = document.getElementById('ctrl'); el.innerHTML = h;
@@ -341,13 +343,17 @@ function colorI(i,p){
   const u=D.ind.umbral[i], a=D.ind.amarillo;
   return p>=u ? 'g' : (p>=u*a ? 'y' : 'r');
 }
+function valI(x,i){
+  if(i!=='bill') return x.val[i];
+  return D.r.reduce((a,r) => (r[0]===x.m && (st.emp<0 || r[1]===st.emp)) ? a+r[8] : a, 0);
+}
 function indPeriodo(i){
   // devuelve {val, meta} del periodo seleccionado
   const ms=D.ind.meses.filter(x => x.val);
-  if(st.mes>0){const x=D.ind.meses[st.mes-1]; return x.val ? {val:x.val[i], meta:x.meta[i]} : null;}
+  if(st.mes>0){const x=D.ind.meses[st.mes-1]; return x.val ? {val:valI(x,i), meta:x.meta[i]} : null;}
   if(!ms.length) return null;
   if(i==='pipe'){const x=ms[ms.length-1]; return {val:x.val.pipe, meta:x.meta.pipe};}
-  return {val:ms.reduce((a,x)=>a+x.val[i],0), meta:ms.reduce((a,x)=>a+x.meta[i],0)};
+  return {val:ms.reduce((a,x)=>a+valI(x,i),0), meta:ms.reduce((a,x)=>a+x.meta[i],0)};
 }
 function renderInd(){
   const blk=document.getElementById('bloque_ind');
@@ -372,8 +378,8 @@ function renderInd(){
     t+='<tr data-m="'+(k+1)+'" class="'+(st.mes===k+1?'sel':'')+'"><td>'+ML[k]+'</td>';
     ['opp','pipe','po','bill'].forEach(i => {
       if(!x.val){t+='<td><span class="pill n">—</span></td>'; return;}
-      const p=x.meta[i]? x.val[i]/x.meta[i]*100 : null, hj = x.hoja && x.hoja[i]!==undefined ? ' <span class="muted small">(hoja '+x.hoja[i]+'%)</span>' : '';
-      t+='<td title="'+fmtI(i,x.val[i])+' de '+fmtI(i,x.meta[i])+'"><span class="pill '+colorI(i,p)+'">'+(p===null?'—':Math.round(p)+'%')+'</span>'+hj+'</td>';
+      const vv=valI(x,i), p=x.meta[i]? vv/x.meta[i]*100 : null, hj = x.hoja && x.hoja[i]!==undefined ? ' <span class="muted small">(hoja '+x.hoja[i]+'%)</span>' : '';
+      t+='<td title="'+fmtI(i,vv)+' de '+fmtI(i,x.meta[i])+'"><span class="pill '+colorI(i,p)+'">'+(p===null?'—':Math.round(p)+'%')+'</span>'+hj+'</td>';
     });
     t+='</tr>';
   });
@@ -381,7 +387,7 @@ function renderInd(){
   const el=document.getElementById('ind_tabla'); el.innerHTML=t;
   el.querySelectorAll('tbody tr').forEach(r => r.onclick = () => {st.mes=+r.dataset.m; render();});
   document.getElementById('ind_nota').innerHTML='Verde: cumple el umbral del indicador; amarillo: al menos '+Math.round(D.ind.amarillo*100)+'% del umbral; rojo: por debajo. '+
-    'Indicadores siempre en USD (todas las empresas), sin importar el selector de moneda. Nuevas oportunidades = proyectos nuevos del mes (variantes A, B, C del mismo número cuentan una vez). Pipeline = proyectos que entraron a Cotización en el mes y siguen sin aprobar (ingreso esperado en USD). '+
+    'Indicadores siempre en USD, sin importar el selector de moneda. Billing sigue el filtro de empresa; los demás indicadores son de toda la operación. Nuevas oportunidades = proyectos nuevos del mes (variantes A, B, C del mismo número cuentan una vez). Pipeline = proyectos que entraron a Cotización en el mes y siguen sin aprobar (ingreso esperado en USD). '+
     'Closed PO = órdenes de venta confirmadas en el mes. Billing = facturación del mes (sección de ventas). En “Año completo”: oportunidades, Closed PO y Billing se acumulan contra la suma de metas; Pipeline muestra el último cierre. Las metas se pueden editar con el botón “Editar metas”; los valores iniciales vienen de metas_comercial.json (hoja de indicadores).';
 }
 

@@ -1210,7 +1210,7 @@ function setAnio(a){
   if(st.empName===null) st.emp=defaultEmp(); else st.emp=D.empresas.indexOf(st.empName);
   if(st.emp>=0) st.empName=D.empresas[st.emp]; else if(st.empName===null) st.empName='';
   if(st.mes>12) st.mes=0;
-  renderCtrl(); initAdm(); initDis(); disEst(); initPro(); proEst(); render();
+  renderCtrl(); initMetas(); estMetas(); initAdm(); initDis(); disEst(); initPro(); proEst(); render();
 }
 document.querySelectorAll('#monseg button').forEach(b => b.onclick = () => {st.mon=b.dataset.c; render();});
 document.getElementById('btn_metas').onclick = () => {

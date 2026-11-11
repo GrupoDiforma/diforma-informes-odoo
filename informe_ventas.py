@@ -63,6 +63,8 @@ def cargar_env():
 # --------------------------------------------------------------------------
 class Odoo:
     def __init__(self, url, db, key):
+        key = "".join(str(key).split())      # quita espacios y saltos de linea pegados por error
+        db = str(db).strip()
         url = url.strip().rstrip("/")
         if not url.startswith("http"):
             url = "https://" + url

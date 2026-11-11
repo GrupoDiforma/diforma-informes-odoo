@@ -471,6 +471,32 @@ function renderInd(){
     'Closed PO = órdenes de venta confirmadas en el mes. Billing = facturación del mes (sección de ventas). En “Año completo”: oportunidades, Closed PO y Billing se acumulan contra la suma de metas; Pipeline muestra el último cierre. Las metas se pueden editar con el botón “Editar metas”; los valores iniciales vienen de metas_comercial.json (hoja de indicadores).';
 }
 
+// ---- metas compartidas (Google Sheets por Apps Script) ----
+const NUBE_URL='__NUBE__';
+let NUBE_OK=false;
+function nubeCargar(){
+  if(!NUBE_URL) return Promise.resolve();
+  const ctl=new AbortController(), t=setTimeout(()=>ctl.abort(), 6000);
+  return fetch(NUBE_URL+'?accion=leer',{signal:ctl.signal}).then(r=>r.json()).then(j=>{
+    clearTimeout(t);
+    if(j && j.ok && j.datos){NUBE_OK=true; Object.keys(j.datos).forEach(k=>{try{localStorage.setItem(k, j.datos[k]);}catch(e){}});}
+  }).catch(()=>{clearTimeout(t);});
+}
+function nubeGuardar(k,v){
+  if(!NUBE_URL) return;
+  let pin=''; try{pin=sessionStorage.getItem('diforma_pin')||'';}catch(e){}
+  if(!pin){pin=prompt('Clave de edición para guardar las metas para todos (cancele para guardar solo en este navegador):')||''; if(!pin) return;}
+  fetch(NUBE_URL,{method:'POST',body:JSON.stringify({pin:pin,clave:k,valor:v})}).then(r=>r.json()).then(j=>{
+    if(j && j.ok){try{sessionStorage.setItem('diforma_pin',pin);}catch(e){} avisoNube('Metas guardadas para todos.');}
+    else{try{sessionStorage.removeItem('diforma_pin');}catch(e){} avisoNube('No se guardó para todos: '+((j&&j.error)||'error')+'. Quedó solo en este navegador.');}
+  }).catch(()=>avisoNube('No se pudo contactar la hoja compartida. Quedó solo en este navegador.'));
+}
+function avisoNube(m){
+  let e=document.getElementById('nube_aviso');
+  if(!e){e=document.createElement('div'); e.id='nube_aviso'; e.style.cssText='position:fixed;right:12px;bottom:12px;background:#222;color:#fff;padding:8px 12px;border-radius:8px;font-size:13px;z-index:99'; document.body.appendChild(e);}
+  e.textContent=m; e.style.display=''; clearTimeout(e._t); e._t=setTimeout(()=>{e.style.display='none';}, 5000);
+}
+
 // ---- metas editables (se guardan en este navegador) ----
 let MKEY=''; const IK=['opp','pipe','po','bill'];
 let DEFM=null;
@@ -481,7 +507,7 @@ function initMetas(){
   try{const sv=JSON.parse(localStorage.getItem(MKEY)||'null');
     if(sv) sv.forEach((m,k) => {if(m && D.ind.meses[k]) IK.forEach(i => {if(typeof m[i]==='number' && m[i]>=0) D.ind.meses[k].meta[i]=m[i];});});}catch(e){}
 }
-function saveMetas(){try{localStorage.setItem(MKEY, JSON.stringify(D.ind.meses.map(x=>x.meta)));}catch(e){}}
+function saveMetas(){try{const v=JSON.stringify(D.ind.meses.map(x=>x.meta)); localStorage.setItem(MKEY, v); nubeGuardar(MKEY,v);}catch(e){}}
 const hayCambios = () => D.ind.meses.some((x,k) => IK.some(i => x.meta[i]!==DEFM[k][i]));
 function estMetas(){document.getElementById('metas_est').textContent = !D.ind ? '' : hayCambios() ? 'Metas modificadas a mano (guardadas en este navegador).' : 'Metas de la hoja de indicadores.';}
 function renderEdit(){
@@ -787,7 +813,7 @@ function initAdm(){
 }
 const admCambios = () => AK.some(i => AMETA[i]!==ADEF[i]) || ABIEN.some((x,j) => x!==ABDEF[j]);
 function admEst(){document.getElementById('adm_est').textContent = !admOk()? '' : (admCambios() ? 'Metas/datos modificados a mano (guardados en este navegador).' : 'Metas de la hoja de indicadores.');}
-function admSave(){try{localStorage.setItem(AKEY, JSON.stringify({meta:AMETA, bien:ABIEN}));}catch(e){}}
+function admSave(){try{const v=JSON.stringify({meta:AMETA, bien:ABIEN}); localStorage.setItem(AKEY, v); nubeGuardar(AKEY,v);}catch(e){}}
 function renderAdmEdit(){
   const el=document.getElementById('adm_edit');
   let h='<div class="ed"><div class="small muted" style="margin-bottom:6px">Escriba la meta y el dashboard se actualiza al instante. Los cambios se guardan en este navegador; para dejarlos permanentes edite metas_admin.json. Las celdas amarillas difieren de la hoja.</div><table><thead><tr><th>Indicador</th><th>Meta</th><th>Criterio</th></tr></thead><tbody>';
@@ -972,7 +998,7 @@ function initDis(){
 }
 const disCambios = () => DK.some(i => DMETA[i]!==DDEF[i]) || DIA.some((x,j) => x!==DIADEF[j]);
 function disEst(){document.getElementById('dis_est').textContent = !disOk()? '' : (disCambios() ? 'Metas/datos modificados a mano (guardados en este navegador).' : 'Metas de la hoja de indicadores.');}
-function disSave(){try{localStorage.setItem(DKEY, JSON.stringify({meta:DMETA, ia:DIA}));}catch(e){}}
+function disSave(){try{const v=JSON.stringify({meta:DMETA, ia:DIA}); localStorage.setItem(DKEY, v); nubeGuardar(DKEY,v);}catch(e){}}
 function renderDisEdit(){
   const el=document.getElementById('dis_edit');
   let h='<div class="ed"><div class="small muted" style="margin-bottom:6px">Escriba la meta (en %) y el dashboard se actualiza al instante. Los cambios se guardan en este navegador; para dejarlos permanentes edite metas_diseno.json. Las celdas amarillas difieren de la hoja.</div><table><thead><tr><th>Indicador</th><th>Meta (%)</th><th>Criterio</th></tr></thead><tbody>';
@@ -1151,7 +1177,7 @@ function initPro(){
 }
 const proCambios = () => PK.some(i => PMETA[i]!==PDEF[i]) || PMAN.some((x,j) => x!==PMANDEF[j]);
 function proEst(){document.getElementById('pro_est').textContent = !proOk()? '' : (proCambios() ? 'Metas/datos modificados a mano (guardados en este navegador).' : 'Metas de la hoja de indicadores.');}
-function proSave(){try{localStorage.setItem(PKEY, JSON.stringify({meta:PMETA, prov:PMAN}));}catch(e){}}
+function proSave(){try{const v=JSON.stringify({meta:PMETA, prov:PMAN}); localStorage.setItem(PKEY, v); nubeGuardar(PKEY,v);}catch(e){}}
 function renderProEdit(){
   const el=document.getElementById('pro_edit');
   let h='<div class="ed"><div class="small muted" style="margin-bottom:6px">Escriba la meta y el dashboard se actualiza al instante. Los cambios se guardan en este navegador; para dejarlos permanentes edite metas_produccion.json. Las celdas amarillas difieren de la hoja.</div><table><thead><tr><th>Indicador</th><th>Meta</th><th>Criterio</th></tr></thead><tbody>';
@@ -1208,10 +1234,21 @@ document.getElementById('btn_metas_pro').onclick = () => {
   e.style.display=ab?'':'none'; if(ab) renderProEdit();
 };
 renderTabs();
-setAnio(MULTI.anio_defecto);
+nubeCargar().then(()=>setAnio(MULTI.anio_defecto));
 })();
 </script></body></html>
 """
+
+
+def _url_nube():
+    """URL del Apps Script que guarda las metas compartidas (archivo nube.json junto a este modulo)."""
+    try:
+        return str(json.loads((Path(__file__).resolve().parent / "nube.json").read_text(encoding="utf-8")).get("url", "")).strip()
+    except (OSError, ValueError):
+        return ""
+
+
+PLANTILLA = PLANTILLA.replace("__NUBE__", _url_nube())
 
 
 def main():

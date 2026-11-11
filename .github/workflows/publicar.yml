@@ -1,0 +1,47 @@
+name: Publicar dashboard
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # cada 6 horas
+  workflow_dispatch: {}      # boton "Run workflow"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  construir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Generar dashboard desde Odoo (solo lectura)
+        env:
+          ODOO_URL: ${{ secrets.ODOO_URL }}
+          ODOO_DB: ${{ secrets.ODOO_DB }}
+          ODOO_KEY: ${{ secrets.ODOO_KEY }}
+        run: python publicar_sitio.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  publicar:
+    needs: construir
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

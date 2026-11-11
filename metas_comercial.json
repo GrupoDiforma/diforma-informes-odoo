@@ -1,0 +1,118 @@
+{
+  "_ayuda": "Metas y umbrales del area comercial. Edite los valores y vuelva a generar el dashboard. Las metas por mes (clave AAAA-MM) reemplazan a las de 'defecto'. Valores en USD sin IVA.",
+  "defecto": {
+    "opp": 24,
+    "pipe": 160000,
+    "po": 130000,
+    "bill": 130000
+  },
+  "metas": {
+    "2025-09": {
+      "opp": 40,
+      "pipe": 260000
+    },
+    "2025-10": {
+      "opp": 40,
+      "pipe": 260000
+    },
+    "2025-11": {
+      "opp": 40,
+      "pipe": 260000
+    },
+    "2025-12": {
+      "opp": 40,
+      "pipe": 260000
+    }
+  },
+  "umbral_pct": {
+    "opp": 100,
+    "pipe": 80,
+    "po": 85,
+    "bill": 100
+  },
+  "amarillo_desde": 0.7,
+  "pipeline_estados": [
+    "sent"
+  ],
+  "oportunidades_criterio": "creadas_vigentes",
+  "_oportunidades_criterio_opciones": "creadas = todas las oportunidades creadas en el mes; creadas_vigentes = creadas en el mes sin contar las perdidas; convertidas = por fecha de conversion de iniciativa a oportunidad",
+  "_nota_metas": "Meta de Closed PO y de Billing: la hoja no las trae, se asumio 130000 USD/mes. Corrijalas aqui si son otras.",
+  "hoja": {
+    "2025-09": {
+      "opp": 55,
+      "pipe": 137,
+      "po": 99,
+      "bill": 128
+    },
+    "2025-10": {
+      "opp": 130,
+      "pipe": 157,
+      "po": 41,
+      "bill": 41
+    },
+    "2025-11": {
+      "opp": 90,
+      "pipe": 106,
+      "po": 43,
+      "bill": 42
+    },
+    "2025-12": {
+      "opp": 35,
+      "pipe": 195,
+      "po": 18,
+      "bill": 45
+    },
+    "2026-01": {
+      "opp": 50,
+      "pipe": 254,
+      "po": 147,
+      "bill": 7
+    },
+    "2026-02": {
+      "opp": 183,
+      "pipe": 226,
+      "po": 167,
+      "bill": 15
+    },
+    "2026-03": {
+      "opp": 158,
+      "pipe": 396,
+      "po": 60,
+      "bill": 183
+    },
+    "2026-04": {
+      "opp": 96,
+      "pipe": 525,
+      "po": 109,
+      "bill": 12
+    },
+    "2026-05": {
+      "opp": 88,
+      "pipe": 243,
+      "po": 29,
+      "bill": 133
+    },
+    "2026-07": {
+      "opp": 113,
+      "pipe": 450,
+      "po": 5,
+      "bill": 12
+    }
+  },
+  "_hoja_trimestres": {
+    "1er semestre 2026": {
+      "opp": 169,
+      "pipe": 210,
+      "po": 66,
+      "bill": 71
+    },
+    "3Q 2026": {
+      "opp": 124,
+      "pipe": 195,
+      "po": 69,
+      "bill": 34
+    }
+  },
+  "fuente_oportunidades_pipeline": "proyectos",
+  "_fuente_nota": "proyectos = modulo Diforma Brief (crm.lead). Nuevas oportunidades = numeros de proyecto vistos por primera vez en el mes. Pipeline = proyectos que entraron a Cotizacion en el mes y siguen sin aprobar (USD; ingreso > 500.000 se asume COP)."
+}

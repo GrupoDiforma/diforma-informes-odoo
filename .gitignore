@@ -1,0 +1,8 @@
+.env
+conexion.txt
+informes/
+site/
+__pycache__/
+*.xlsx
+diagnostico*.txt
+calibracion*.txt

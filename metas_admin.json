@@ -1,0 +1,45 @@
+{
+  "_ayuda": "Metas y umbrales del area administrativa (hoja 'Indicadores Area (Administrativa)'). Edite los valores y vuelva a generar el dashboard; tambien se pueden ajustar a mano en el dashboard con el boton 'Editar metas' (se guardan solo en ese navegador). 'tipo': max = menor es mejor, min = mayor es mejor.",
+  "metas": {
+    "razon": 0.3,
+    "fin": 0.5,
+    "apal": 1.0,
+    "rot": 2.0,
+    "cobro": 30,
+    "pago": 5,
+    "ciclo": 30,
+    "bienestar": 100
+  },
+  "tipo": {
+    "razon": "max",
+    "fin": "max",
+    "apal": "max",
+    "rot": "min",
+    "cobro": "max",
+    "pago": "max",
+    "ciclo": "max",
+    "bienestar": "min"
+  },
+  "amarillo_max": 1.25,
+  "amarillo_min": 0.7,
+  "_nota_umbrales": "Verde: cumple la meta. Amarillo: hasta 25% por encima de la meta (indicadores 'max') o al menos 70% de la meta (indicadores 'min'). Rojo: peor. La hoja no define estos umbrales; son supuestos, ajustelos aqui.",
+  "_nota_metas_2025": "En sep-oct 2025 la hoja usaba meta 1,5 para apalancamiento y 15 para ciclo de efectivo; desde dic 2025 usa 1,0 y 30. Aqui se usan las vigentes.",
+  "obligaciones_financieras_prefijos": ["21"],
+  "_nota_obligaciones": "Obligaciones financieras = cuentas de pasivo cuyo codigo empieza por 21 (PUC: bancos, tarjetas, leasing y 2195 deudas con particulares, incluidas por decision del area).",
+  "inventario_prefijos": ["14"],
+  "manual": {
+    "bienestar": {
+      "2026": [0, 0, 0, 0, 0, 0, 0, null, null, null, null, null]
+    }
+  },
+  "_nota_manual": "Bienestar no sale de Odoo: % de actividades de bienestar cumplidas en el semestre. Valores de la hoja (ene-jul 2026 = 0). Edite aqui o a mano en el dashboard.",
+  "hoja": {
+    "2026-01": {"razon": 0.85, "fin": 0.52, "apal": 0.58, "rot": 12, "cobro": 24, "pago": 45, "ciclo": 82, "bienestar": 0},
+    "2026-02": {"razon": 0.86, "fin": 0.50, "apal": 0.58, "rot": 8,  "cobro": 24, "pago": 51, "ciclo": 82, "bienestar": 0},
+    "2026-03": {"razon": 0.74, "fin": 0.60, "apal": 0.58, "rot": 9,  "cobro": 24, "pago": 57, "ciclo": 86, "bienestar": 0},
+    "2026-04": {"razon": 0.76, "fin": 0.58, "apal": 0.58, "rot": 9,  "cobro": 24, "pago": 57, "ciclo": 86, "bienestar": 0},
+    "2026-05": {"razon": 0.80, "fin": 0.73, "apal": 0.46, "rot": 9,  "cobro": 24, "pago": 72, "ciclo": 86, "bienestar": 0},
+    "2026-06": {"razon": 0.80, "fin": 0.73, "apal": 0.46, "rot": 9,  "cobro": 24, "pago": 72, "ciclo": 86, "bienestar": 0},
+    "2026-07": {"razon": 0.90, "fin": 0.90, "apal": 0.35, "rot": 10, "cobro": 24, "pago": 92, "ciclo": 94, "bienestar": 0}
+  }
+}

@@ -197,7 +197,7 @@ table.sub{font-size:12px;margin:0}table.sub th,table.sub td{background:#fafbfc}
 <div class="kpis" id="kpis"></div>
 <div class="kpis" id="ytd"></div>
 <div id="bloque_ind" style="display:none"><h2 id="t_ind">Indicadores del área comercial</h2>
-<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas">✎ Editar metas</button> <span class="muted" id="metas_est"></span></div>
+<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas">✎ Editar metas</button> <span class="muted" id="metas_est"></span> <select id="ind_com" title="Filtrar por comercial"></select> <span class="muted" id="com_est"></span></div>
 <div id="ind_edit" style="display:none"></div>
 <div class="ind" id="ind_cards"></div><div id="ind_tabla"></div>
 <div class="small muted" id="ind_nota"></div></div>
@@ -247,7 +247,7 @@ const nf = new Intl.NumberFormat('es-CO',{maximumFractionDigits:0});
 const nf1 = new Intl.NumberFormat('es-CO',{maximumFractionDigits:1});
 const pf = new Intl.NumberFormat('es-CO',{minimumFractionDigits:1,maximumFractionDigits:1});
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const st = {anio:null, mes:0, mon:'usd', emp:-1, empName:null, tab:'com', ind:'razon'};
+const st = {anio:null, mes:0, mon:'usd', emp:-1, empName:null, tab:'com', ind:'razon', com:''};
 const OTRA = {usd:'cop', cop:'usd'};
 // fila r: [mes, emp, cli, ven, equ, pro, cat, fac, usd, cop]
 let M, P, RW;
@@ -424,34 +424,56 @@ function colorI(i,p){
   const u=D.ind.umbral[i], a=D.ind.amarillo;
   return p>=u ? 'g' : (p>=u*a ? 'y' : 'r');
 }
-function valI(x,i){
-  if(i!=='bill') return x.val[i];
-  return D.r.reduce((a,r) => (r[0]===x.m && (st.emp<0 || r[1]===st.emp)) ? a+r[8] : a, 0);
+const nrm = t => String(t||'').trim().toLowerCase();
+function comVend(){return (D.ind && D.ind.vend) || {};}
+function comLista(){
+  const n={}; Object.keys(comVend()).forEach(k => n[nrm(k)]=k);
+  D.vendedores.forEach(k => {if(!(nrm(k) in n)) n[nrm(k)]=k;});
+  return Object.values(n).filter(k => nrm(k)!=='' && nrm(k)!=='false').sort((a,b) => a.localeCompare(b));
 }
+function valI(x,i){
+  if(!st.com){
+    if(i!=='bill') return x.val[i];
+    return D.r.reduce((a,r) => (r[0]===x.m && (st.emp<0 || r[1]===st.emp)) ? a+r[8] : a, 0);
+  }
+  const c=nrm(st.com);
+  if(i==='bill') return D.r.reduce((a,r) => (r[0]===x.m && (st.emp<0 || r[1]===st.emp) && nrm(D.vendedores[r[3]])===c) ? a+r[8] : a, 0);
+  const k=Object.keys(comVend()).find(n => nrm(n)===c), v=k?comVend()[k][i]:null;
+  return v ? (v[x.m-1]||0) : 0;
+}
+function indTodos(fn){const c=st.com; st.com=''; try{return fn();}finally{st.com=c;}}
 function indPeriodo(i){
   // devuelve {val, meta} del periodo seleccionado
   const ms=D.ind.meses.filter(x => x.val);
   if(st.mes>0){const x=D.ind.meses[st.mes-1]; return x.val ? {val:valI(x,i), meta:x.meta[i]} : null;}
   if(!ms.length) return null;
-  if(i==='pipe'){const x=ms[ms.length-1]; return {val:x.val.pipe, meta:x.meta.pipe};}
+  if(i==='pipe'){const x=ms[ms.length-1]; return {val:valI(x,'pipe'), meta:x.meta.pipe};}
   return {val:ms.reduce((a,x)=>a+valI(x,i),0), meta:ms.reduce((a,x)=>a+x.meta[i],0)};
 }
 function renderInd(){
   const blk=document.getElementById('bloque_ind');
   if(!D.ind || !D.ind.ok){blk.style.display='none'; return;}
   blk.style.display='';
-  document.getElementById('t_ind').textContent='Indicadores del área comercial · '+periodoTxt();
+  const sc=document.getElementById('ind_com'), lst=comLista();
+  if(st.com && !lst.some(k => nrm(k)===nrm(st.com))) st.com='';
+  sc.innerHTML='<option value="">Todos los comerciales</option>'+lst.map(k => '<option value="'+esc(k)+'"'+(nrm(k)===nrm(st.com)?' selected':'')+'>'+esc(k)+'</option>').join('');
+  sc.onchange=()=>{st.com=sc.value; render();};
+  document.getElementById('com_est').textContent = st.com ? 'Vista individual: no hay metas por comercial; se muestra cada indicador y su peso en el total del equipo.' : '';
+  document.getElementById('btn_metas').style.display = st.com ? 'none' : '';
+  if(st.com) document.getElementById('ind_edit').style.display='none';
+  document.getElementById('t_ind').textContent='Indicadores del área comercial'+(st.com?' · '+st.com:'')+' · '+periodoTxt();
   let h='';
   ['opp','pipe','po','bill'].forEach(i => {
     const r=indPeriodo(i);
     if(!r){h+='<div class="ic"><div class="l">'+INAMES[i]+'</div><div class="p">—</div></div>'; return;}
-    const p=r.meta? r.val/r.meta*100 : null, c=colorI(i,p);
+    let p=r.meta? r.val/r.meta*100 : null, c=colorI(i,p), tot=null;
+    if(st.com){const t=indTodos(() => indPeriodo(i)); tot=(t && t.val)? r.val/t.val*100 : null; p=tot; c='';}
     let ref='';
     if(st.mes>0){const hj=D.ind.meses[st.mes-1].hoja; if(hj && hj[i]!==undefined) ref='<div class="small muted">Según la hoja: '+hj[i]+'%</div>';}
     const sub = (st.mes===0 && i==='pipe') ? 'cierre de '+MC[D.ind.meses.filter(x=>x.val).length-1] : IDESC[i];
     h+='<div class="ic '+c+'"><div class="l">'+INAMES[i]+'</div><div class="p">'+(p===null?'—':Math.round(p)+'%')+'</div>'+
        '<div class="pb"><i style="width:'+Math.min(100,p||0)+'%"></i></div>'+
-       '<div class="small"><b>'+fmtI(i,r.val)+'</b> de '+fmtI(i,r.meta)+'</div><div class="small muted">'+sub+' · umbral '+D.ind.umbral[i]+'%</div>'+ref+'</div>';
+       (st.com ? '<div class="small"><b>'+fmtI(i,r.val)+'</b> · '+(tot===null?'—':Math.round(tot)+'% del equipo')+'</div>' : '<div class="small"><b>'+fmtI(i,r.val)+'</b> de '+fmtI(i,r.meta)+'</div>')+'<div class="small muted">'+sub+(st.com?'':' · umbral '+D.ind.umbral[i]+'%')+'</div>'+(st.com?'':ref)+'</div>';
   });
   document.getElementById('ind_cards').innerHTML=h;
   let t='<table><thead><tr><th>Mes</th>'+['opp','pipe','po','bill'].map(i=>'<th>'+INAMES[i]+'</th>').join('')+'</tr></thead><tbody>';
@@ -460,6 +482,7 @@ function renderInd(){
     ['opp','pipe','po','bill'].forEach(i => {
       if(!x.val){t+='<td><span class="pill n">—</span></td>'; return;}
       const vv=valI(x,i), p=x.meta[i]? vv/x.meta[i]*100 : null, hj = x.hoja && x.hoja[i]!==undefined ? ' <span class="muted small">(hoja '+x.hoja[i]+'%)</span>' : '';
+      if(st.com){t+='<td><span class="pill n">'+fmtI(i,vv)+'</span></td>'; return;}
       t+='<td title="'+fmtI(i,vv)+' de '+fmtI(i,x.meta[i])+'"><span class="pill '+colorI(i,p)+'">'+(p===null?'—':Math.round(p)+'%')+'</span>'+hj+'</td>';
     });
     t+='</tr>';

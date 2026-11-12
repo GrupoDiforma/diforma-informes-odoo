@@ -58,7 +58,8 @@ def construir_datos(odoo, anio):
     _, emp_n = codificar(hist["empresa"])
     emp, _ = codificar(act["empresa"], emp_n)
     cli, cli_n = codificar(act["cliente"])
-    ven, ven_n = codificar(act["vendedor"])
+    _, ven_n = codificar(hist["vendedor"])
+    ven, _ = codificar(act["vendedor"], ven_n)
     equ, equ_n = codificar(act["equipo"])
     pro, pro_n = codificar(act["producto"])
     cat, cat_n = codificar(act["categoria"])
@@ -71,8 +72,9 @@ def construir_datos(odoo, anio):
              zip(act["mes"], emp, cli, ven, equ, pro, cat, fac, act["usd"], act["cop"])]
 
     pe, _ = codificar(prev["empresa"], emp_n) if len(prev) else ([], emp_n)
-    pr = prev.assign(emp=pe).groupby(["mes", "emp"])[["usd", "cop"]].sum().reset_index()
-    prev_filas = [[int(r.mes), int(r.emp), round(float(r.usd), 2), round(float(r.cop))] for r in pr.itertuples()]
+    pv, _ = codificar(prev["vendedor"], ven_n) if len(prev) else ([], ven_n)
+    pr = prev.assign(emp=pe, ven=pv).groupby(["mes", "emp", "ven"])[["usd", "cop"]].sum().reset_index()
+    prev_filas = [[int(r.mes), int(r.emp), round(float(r.usd), 2), round(float(r.cop)), int(r.ven)] for r in pr.itertuples()]
 
     datos = dict(
         anio=anio, generado=datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -197,7 +199,7 @@ table.sub{font-size:12px;margin:0}table.sub th,table.sub td{background:#fafbfc}
 <div class="kpis" id="kpis"></div>
 <div class="kpis" id="ytd"></div>
 <div id="bloque_ind" style="display:none"><h2 id="t_ind">Indicadores del área comercial</h2>
-<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas">✎ Editar metas</button> <span class="muted" id="metas_est"></span> <select id="ind_com" title="Filtrar por comercial"></select> <span class="muted" id="com_est"></span></div>
+<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas">✎ Editar metas</button> <span class="muted" id="metas_est"></span> <span class="muted" id="com_est"></span></div>
 <div id="ind_edit" style="display:none"></div>
 <div class="ind" id="ind_cards"></div><div id="ind_tabla"></div>
 <div class="small muted" id="ind_nota"></div></div>
@@ -253,13 +255,14 @@ const OTRA = {usd:'cop', cop:'usd'};
 let M, P, RW;
 
 function compute(){
-  RW = st.emp<0 ? D.r : D.r.filter(r => r[1]===st.emp);
+  const vi = st.com ? D.vendedores.findIndex(n => nrm(n)===nrm(st.com)) : -2;
+  RW = D.r.filter(r => (st.emp<0 || r[1]===st.emp) && (vi===-2 || r[3]===vi));
   M = {usd:Array(12).fill(0), cop:Array(12).fill(0), n:Array(12).fill(0)};
   const sets = Array.from({length:12}, () => new Set());
   RW.forEach(r => {const m=r[0]-1; M.usd[m]+=r[8]; M.cop[m]+=r[9]; if(D.ftipo[r[7]]===0) sets[m].add(r[7]);});
   M.n = sets.map(s => s.size);
   P = {usd:Array(12).fill(0), cop:Array(12).fill(0)};
-  D.pr.forEach(r => {if(st.emp<0 || r[1]===st.emp){P.usd[r[0]-1]+=r[2]; P.cop[r[0]-1]+=r[3];}});
+  D.pr.forEach(r => {if((st.emp<0 || r[1]===st.emp) && (vi===-2 || r[4]===vi)){P.usd[r[0]-1]+=r[2]; P.cop[r[0]-1]+=r[3];}});
 }
 const sum = (a,from,to) => {let s=0; for(let i=from;i<to;i++) s+=a[i]; return s;};
 const money = (v,mon) => (mon==='usd'?'US$ ':'COP ') + nf.format(Math.round(v));
@@ -293,9 +296,13 @@ function renderCtrl(){
     h += '<select id="emp"><option value="-1">Todas las empresas</option>' +
          D.empresas.map((e,i) => '<option value="'+i+'"'+(i===st.emp?' selected':'')+'>'+esc(e)+'</option>').join('') + '</select>';
   }
+  const lc = comLista();
+  h += '<select id="com" title="Filtrar por comercial"><option value="">Todos los comerciales</option>' +
+       lc.map(k => '<option value="'+esc(k)+'"'+(nrm(k)===nrm(st.com)?' selected':'')+'>'+esc(k)+'</option>').join('') + '</select>';
   const el = document.getElementById('ctrl'); el.innerHTML = h;
   el.querySelectorAll('.chip').forEach(b => b.onclick = () => {st.mes=+b.dataset.m; render();});
   document.getElementById('anio').onchange = e => setAnio(+e.target.value);
+  const sv = document.getElementById('com'); sv.onchange = () => {st.com=sv.value; render();};
   const se = document.getElementById('emp'); if(se) se.onchange = () => {st.emp=+se.value; st.empName = st.emp<0 ? '' : D.empresas[st.emp]; render();};
 }
 function updateCtrl(){
@@ -311,6 +318,7 @@ function renderTabs(){
 function updateTabs(){
   document.querySelectorAll('#tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.t===st.tab));
   document.getElementById('tab_com').style.display = st.tab==='com' ? '' : 'none';
+  const sc0=document.getElementById('com'); if(sc0) sc0.style.display = st.tab==='com' ? '' : 'none';
   document.getElementById('tab_adm').style.display = st.tab==='adm' ? '' : 'none';
   document.getElementById('tab_dis').style.display = st.tab==='dis' ? '' : 'none';
   document.getElementById('tab_pro').style.display = st.tab==='pro' ? '' : 'none';
@@ -454,11 +462,7 @@ function renderInd(){
   const blk=document.getElementById('bloque_ind');
   if(!D.ind || !D.ind.ok){blk.style.display='none'; return;}
   blk.style.display='';
-  const sc=document.getElementById('ind_com'), lst=comLista();
-  if(st.com && !lst.some(k => nrm(k)===nrm(st.com))) st.com='';
-  sc.innerHTML='<option value="">Todos los comerciales</option>'+lst.map(k => '<option value="'+esc(k)+'"'+(nrm(k)===nrm(st.com)?' selected':'')+'>'+esc(k)+'</option>').join('');
-  sc.onchange=()=>{st.com=sc.value; render();};
-  document.getElementById('com_est').textContent = st.com ? 'Vista individual: no hay metas por comercial; se muestra cada indicador y su peso en el total del equipo.' : '';
+  document.getElementById('com_est').textContent = st.com ? 'Vista de '+st.com+': no hay metas por comercial; cada indicador muestra su valor y su peso en el total del equipo.' : '';
   document.getElementById('btn_metas').style.display = st.com ? 'none' : '';
   if(st.com) document.getElementById('ind_edit').style.display='none';
   document.getElementById('t_ind').textContent='Indicadores del área comercial'+(st.com?' · '+st.com:'')+' · '+periodoTxt();
@@ -1234,6 +1238,7 @@ function setAnio(a){
   if(st.empName===null) st.emp=defaultEmp(); else st.emp=D.empresas.indexOf(st.empName);
   if(st.emp>=0) st.empName=D.empresas[st.emp]; else if(st.empName===null) st.empName='';
   if(st.mes>12) st.mes=0;
+  if(st.com && !comLista().some(k => nrm(k)===nrm(st.com))) st.com='';
   renderCtrl(); initMetas(); estMetas(); initAdm(); initDis(); disEst(); initPro(); proEst(); render();
 }
 document.querySelectorAll('#monseg button').forEach(b => b.onclick = () => {st.mon=b.dataset.c; render();});

@@ -120,6 +120,8 @@ def traer_ordenes(odoo, desde, hasta, avisos):
     df["conf"] = _local(df["date_order"])
     df["mod"] = _local(df["write_date"])
     df["moneda"] = df["currency_id"].map(iv.m2o)
+    df["vend"] = df["user_id"].map(iv.m2o).astype(str).str.strip() if "user_id" in df else "Sin asignar"
+    df.loc[df["vend"].isin(["", "False", "(sin dato)", "None"]), "vend"] = "Sin asignar"
     cop_usd, _ = iv.tabla_trm(odoo, desde)
     fecha = df["conf"].fillna(df["creada"])
     trm = iv.trm_cercana(fecha, cop_usd)
@@ -166,7 +168,7 @@ def _leer_ids(odoo, modelo, ids, campos, lote=1000):
 def traer_proyectos(odoo, avisos):
     """Proyectos (crm.lead) con ingreso esperado en USD corregido y fechas de entrada a Cotizacion."""
     campos = iv.campos_existentes(odoo, "crm.lead", ["name", "create_date", "stage_id", "expected_revenue",
-                                                      "active", "date_last_stage_update"])
+                                                      "active", "date_last_stage_update", "id_vendedor", "user_id"])
     for c in ("name", "create_date"):
         if c not in campos:
             campos.append(c)
@@ -174,6 +176,13 @@ def traer_proyectos(odoo, avisos):
     if df.empty:
         return None
     df["creada"] = _local(df["create_date"])
+    # comercial del proyecto: campo propio id_vendedor (Diforma Brief); si no existe o esta vacio, el responsable (user_id)
+    vend = pd.Series("Sin asignar", index=df.index)
+    for col in ("user_id", "id_vendedor"):
+        if col in df:
+            nom = df[col].map(iv.m2o).astype(str).str.strip()
+            vend = vend.where(nom.isin(["", "False", "(sin dato)", "None"]), nom)
+    df["vend"] = vend
     df["etapa_id"] = df["stage_id"].map(iv.m2o_id) if "stage_id" in df else 0
     df["activo"] = df["active"].astype(bool) if "active" in df else True
     df["ult"] = _local(df["date_last_stage_update"]) if "date_last_stage_update" in df else df["creada"]
@@ -212,13 +221,17 @@ def traer_proyectos(odoo, avisos):
     return {"df": df, "cot": cot, "entradas": entradas}
 
 
-def indicadores_proyectos(pr, anio):
-    """({mes: nuevos proyectos}, {mes: pipeline USD}) para el año, segun las definiciones de Diforma."""
+def indicadores_proyectos(pr, anio, vend=None):
+    """({mes: nuevos proyectos}, {mes: pipeline USD}) para el año, segun las definiciones de Diforma.
+    Con vend: solo los proyectos de ese comercial."""
     df, cot, entradas = pr["df"], pr["cot"], pr["entradas"]
     # Nuevas oportunidades: numeros de proyecto vistos por primera vez en el mes (variantes A, B, C... no cuentan).
-    # Se ignoran los dias de carga masiva (migracion).
+    # Se ignoran los dias de carga masiva (migracion), calculados sobre todos los proyectos.
     dias = df["creada"].dt.normalize().value_counts()
     masivos = set(dias[dias > DIA_MASIVO].index)
+    if vend is not None:
+        df = df[df["vend"] == vend]
+        entradas = {k: v for k, v in entradas.items() if k in set(df["id"].astype(int))}
     con_num = df[df["num"] > 0].groupby("num")["creada"].min()
     sin_num = df.loc[df["num"] == 0, "creada"]
     primeras = pd.concat([con_num, sin_num])
@@ -244,7 +257,7 @@ def calcular(odoo, anio, cfg, billing_usd, avisos):
     ord_df = traer_ordenes(odoo, date(anio, 1, 1), date(anio + 1, 1, 1), avisos)
     conteo = contar_oportunidades(opp_df, cfg.get("oportunidades_criterio", "creadas_vigentes"))
     estados = cfg.get("pipeline_estados", ["sent"])
-    opp_p = pipe_p = None
+    opp_p = pipe_p = pr = None
     if cfg.get("fuente_oportunidades_pipeline", "proyectos") == "proyectos":
         try:
             pr = traer_proyectos(odoo, avisos)
@@ -266,9 +279,31 @@ def calcular(odoo, anio, cfg, billing_usd, avisos):
                 "bill": round(float(billing_usd.get(m, 0.0))),
             }
         meses.append(reg)
+    # --- por comercial (opp, pipe y po; el billing sale de las facturas en el navegador) ---
+    vend = {}
+    try:
+        nombres = set()
+        if not ord_df.empty:
+            nombres |= set(ord_df.loc[ord_df["state"].isin(["sale", "done"]) & (ord_df["conf"].dt.year == anio), "vend"])
+        pr_df = pr["df"] if (opp_p is not None and pr) else None
+        if pr_df is not None:
+            nombres |= set(pr_df.loc[pr_df["creada"].dt.year == anio, "vend"])
+        for nom in sorted(nombres):
+            vo = ord_df[ord_df["vend"] == nom] if not ord_df.empty else ord_df
+            if pr_df is not None:
+                o_v, p_v = indicadores_proyectos(pr, anio, nom)
+            else:
+                o_v, p_v = {}, {}
+            vend[nom] = {"opp": [o_v.get(m, 0) for m in range(1, 13)],
+                         "pipe": [round(p_v.get(m, 0.0)) for m in range(1, 13)],
+                         "po": [round(closed_po(vo, anio, m)) for m in range(1, 13)]}
+    except (KeyError, ValueError, TypeError, AttributeError) as e:
+        avisos.append("No se pudo calcular el detalle por comercial: " + str(e)[:200])
+        vend = {}
     return {
         "meses": meses, "umbral": cfg["umbral_pct"], "amarillo": cfg.get("amarillo_desde", 0.7),
         "ok": opp_p is not None or not (opp_df.empty and ord_df.empty),
+        "vend": vend,
     }
 
 

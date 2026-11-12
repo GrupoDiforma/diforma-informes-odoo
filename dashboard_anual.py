@@ -58,7 +58,8 @@ def construir_datos(odoo, anio):
     _, emp_n = codificar(hist["empresa"])
     emp, _ = codificar(act["empresa"], emp_n)
     cli, cli_n = codificar(act["cliente"])
-    ven, ven_n = codificar(act["vendedor"])
+    _, ven_n = codificar(hist["vendedor"])
+    ven, _ = codificar(act["vendedor"], ven_n)
     equ, equ_n = codificar(act["equipo"])
     pro, pro_n = codificar(act["producto"])
     cat, cat_n = codificar(act["categoria"])
@@ -71,8 +72,9 @@ def construir_datos(odoo, anio):
              zip(act["mes"], emp, cli, ven, equ, pro, cat, fac, act["usd"], act["cop"])]
 
     pe, _ = codificar(prev["empresa"], emp_n) if len(prev) else ([], emp_n)
-    pr = prev.assign(emp=pe).groupby(["mes", "emp"])[["usd", "cop"]].sum().reset_index()
-    prev_filas = [[int(r.mes), int(r.emp), round(float(r.usd), 2), round(float(r.cop))] for r in pr.itertuples()]
+    pv, _ = codificar(prev["vendedor"], ven_n) if len(prev) else ([], ven_n)
+    pr = prev.assign(emp=pe, ven=pv).groupby(["mes", "emp", "ven"])[["usd", "cop"]].sum().reset_index()
+    prev_filas = [[int(r.mes), int(r.emp), round(float(r.usd), 2), round(float(r.cop)), int(r.ven)] for r in pr.itertuples()]
 
     datos = dict(
         anio=anio, generado=datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -197,7 +199,7 @@ table.sub{font-size:12px;margin:0}table.sub th,table.sub td{background:#fafbfc}
 <div class="kpis" id="kpis"></div>
 <div class="kpis" id="ytd"></div>
 <div id="bloque_ind" style="display:none"><h2 id="t_ind">Indicadores del área comercial</h2>
-<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas">✎ Editar metas</button> <span class="muted" id="metas_est"></span></div>
+<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas">✎ Editar metas</button> <span class="muted" id="metas_est"></span> <span class="muted" id="com_est"></span></div>
 <div id="ind_edit" style="display:none"></div>
 <div class="ind" id="ind_cards"></div><div id="ind_tabla"></div>
 <div class="small muted" id="ind_nota"></div></div>
@@ -247,19 +249,20 @@ const nf = new Intl.NumberFormat('es-CO',{maximumFractionDigits:0});
 const nf1 = new Intl.NumberFormat('es-CO',{maximumFractionDigits:1});
 const pf = new Intl.NumberFormat('es-CO',{minimumFractionDigits:1,maximumFractionDigits:1});
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const st = {anio:null, mes:0, mon:'usd', emp:-1, empName:null, tab:'com', ind:'razon'};
+const st = {anio:null, mes:0, mon:'usd', emp:-1, empName:null, tab:'com', ind:'razon', com:''};
 const OTRA = {usd:'cop', cop:'usd'};
 // fila r: [mes, emp, cli, ven, equ, pro, cat, fac, usd, cop]
 let M, P, RW;
 
 function compute(){
-  RW = st.emp<0 ? D.r : D.r.filter(r => r[1]===st.emp);
+  const vi = st.com ? D.vendedores.findIndex(n => nrm(n)===nrm(st.com)) : -2;
+  RW = D.r.filter(r => (st.emp<0 || r[1]===st.emp) && (vi===-2 || r[3]===vi));
   M = {usd:Array(12).fill(0), cop:Array(12).fill(0), n:Array(12).fill(0)};
   const sets = Array.from({length:12}, () => new Set());
   RW.forEach(r => {const m=r[0]-1; M.usd[m]+=r[8]; M.cop[m]+=r[9]; if(D.ftipo[r[7]]===0) sets[m].add(r[7]);});
   M.n = sets.map(s => s.size);
   P = {usd:Array(12).fill(0), cop:Array(12).fill(0)};
-  D.pr.forEach(r => {if(st.emp<0 || r[1]===st.emp){P.usd[r[0]-1]+=r[2]; P.cop[r[0]-1]+=r[3];}});
+  D.pr.forEach(r => {if((st.emp<0 || r[1]===st.emp) && (vi===-2 || r[4]===vi)){P.usd[r[0]-1]+=r[2]; P.cop[r[0]-1]+=r[3];}});
 }
 const sum = (a,from,to) => {let s=0; for(let i=from;i<to;i++) s+=a[i]; return s;};
 const money = (v,mon) => (mon==='usd'?'US$ ':'COP ') + nf.format(Math.round(v));
@@ -293,9 +296,13 @@ function renderCtrl(){
     h += '<select id="emp"><option value="-1">Todas las empresas</option>' +
          D.empresas.map((e,i) => '<option value="'+i+'"'+(i===st.emp?' selected':'')+'>'+esc(e)+'</option>').join('') + '</select>';
   }
+  const lc = comLista();
+  h += '<select id="com" title="Filtrar por comercial"><option value="">Todos los comerciales</option>' +
+       lc.map(k => '<option value="'+esc(k)+'"'+(nrm(k)===nrm(st.com)?' selected':'')+'>'+esc(k)+'</option>').join('') + '</select>';
   const el = document.getElementById('ctrl'); el.innerHTML = h;
   el.querySelectorAll('.chip').forEach(b => b.onclick = () => {st.mes=+b.dataset.m; render();});
   document.getElementById('anio').onchange = e => setAnio(+e.target.value);
+  const sv = document.getElementById('com'); sv.onchange = () => {st.com=sv.value; render();};
   const se = document.getElementById('emp'); if(se) se.onchange = () => {st.emp=+se.value; st.empName = st.emp<0 ? '' : D.empresas[st.emp]; render();};
 }
 function updateCtrl(){
@@ -311,6 +318,7 @@ function renderTabs(){
 function updateTabs(){
   document.querySelectorAll('#tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.t===st.tab));
   document.getElementById('tab_com').style.display = st.tab==='com' ? '' : 'none';
+  const sc0=document.getElementById('com'); if(sc0) sc0.style.display = st.tab==='com' ? '' : 'none';
   document.getElementById('tab_adm').style.display = st.tab==='adm' ? '' : 'none';
   document.getElementById('tab_dis').style.display = st.tab==='dis' ? '' : 'none';
   document.getElementById('tab_pro').style.display = st.tab==='pro' ? '' : 'none';
@@ -424,34 +432,52 @@ function colorI(i,p){
   const u=D.ind.umbral[i], a=D.ind.amarillo;
   return p>=u ? 'g' : (p>=u*a ? 'y' : 'r');
 }
-function valI(x,i){
-  if(i!=='bill') return x.val[i];
-  return D.r.reduce((a,r) => (r[0]===x.m && (st.emp<0 || r[1]===st.emp)) ? a+r[8] : a, 0);
+const nrm = t => String(t||'').trim().toLowerCase();
+function comVend(){return (D.ind && D.ind.vend) || {};}
+function comLista(){
+  const n={}; Object.keys(comVend()).forEach(k => n[nrm(k)]=k);
+  D.vendedores.forEach(k => {if(!(nrm(k) in n)) n[nrm(k)]=k;});
+  return Object.values(n).filter(k => nrm(k)!=='' && nrm(k)!=='false').sort((a,b) => a.localeCompare(b));
 }
+function valI(x,i){
+  if(!st.com){
+    if(i!=='bill') return x.val[i];
+    return D.r.reduce((a,r) => (r[0]===x.m && (st.emp<0 || r[1]===st.emp)) ? a+r[8] : a, 0);
+  }
+  const c=nrm(st.com);
+  if(i==='bill') return D.r.reduce((a,r) => (r[0]===x.m && (st.emp<0 || r[1]===st.emp) && nrm(D.vendedores[r[3]])===c) ? a+r[8] : a, 0);
+  const k=Object.keys(comVend()).find(n => nrm(n)===c), v=k?comVend()[k][i]:null;
+  return v ? (v[x.m-1]||0) : 0;
+}
+function indTodos(fn){const c=st.com; st.com=''; try{return fn();}finally{st.com=c;}}
 function indPeriodo(i){
   // devuelve {val, meta} del periodo seleccionado
   const ms=D.ind.meses.filter(x => x.val);
   if(st.mes>0){const x=D.ind.meses[st.mes-1]; return x.val ? {val:valI(x,i), meta:x.meta[i]} : null;}
   if(!ms.length) return null;
-  if(i==='pipe'){const x=ms[ms.length-1]; return {val:x.val.pipe, meta:x.meta.pipe};}
+  if(i==='pipe'){const x=ms[ms.length-1]; return {val:valI(x,'pipe'), meta:x.meta.pipe};}
   return {val:ms.reduce((a,x)=>a+valI(x,i),0), meta:ms.reduce((a,x)=>a+x.meta[i],0)};
 }
 function renderInd(){
   const blk=document.getElementById('bloque_ind');
   if(!D.ind || !D.ind.ok){blk.style.display='none'; return;}
   blk.style.display='';
-  document.getElementById('t_ind').textContent='Indicadores del área comercial · '+periodoTxt();
+  document.getElementById('com_est').textContent = st.com ? 'Vista de '+st.com+': no hay metas por comercial; cada indicador muestra su valor y su peso en el total del equipo.' : '';
+  document.getElementById('btn_metas').style.display = st.com ? 'none' : '';
+  if(st.com) document.getElementById('ind_edit').style.display='none';
+  document.getElementById('t_ind').textContent='Indicadores del área comercial'+(st.com?' · '+st.com:'')+' · '+periodoTxt();
   let h='';
   ['opp','pipe','po','bill'].forEach(i => {
     const r=indPeriodo(i);
     if(!r){h+='<div class="ic"><div class="l">'+INAMES[i]+'</div><div class="p">—</div></div>'; return;}
-    const p=r.meta? r.val/r.meta*100 : null, c=colorI(i,p);
+    let p=r.meta? r.val/r.meta*100 : null, c=colorI(i,p), tot=null;
+    if(st.com){const t=indTodos(() => indPeriodo(i)); tot=(t && t.val)? r.val/t.val*100 : null; p=tot; c='';}
     let ref='';
     if(st.mes>0){const hj=D.ind.meses[st.mes-1].hoja; if(hj && hj[i]!==undefined) ref='<div class="small muted">Según la hoja: '+hj[i]+'%</div>';}
     const sub = (st.mes===0 && i==='pipe') ? 'cierre de '+MC[D.ind.meses.filter(x=>x.val).length-1] : IDESC[i];
     h+='<div class="ic '+c+'"><div class="l">'+INAMES[i]+'</div><div class="p">'+(p===null?'—':Math.round(p)+'%')+'</div>'+
        '<div class="pb"><i style="width:'+Math.min(100,p||0)+'%"></i></div>'+
-       '<div class="small"><b>'+fmtI(i,r.val)+'</b> de '+fmtI(i,r.meta)+'</div><div class="small muted">'+sub+' · umbral '+D.ind.umbral[i]+'%</div>'+ref+'</div>';
+       (st.com ? '<div class="small"><b>'+fmtI(i,r.val)+'</b> · '+(tot===null?'—':Math.round(tot)+'% del equipo')+'</div>' : '<div class="small"><b>'+fmtI(i,r.val)+'</b> de '+fmtI(i,r.meta)+'</div>')+'<div class="small muted">'+sub+(st.com?'':' · umbral '+D.ind.umbral[i]+'%')+'</div>'+(st.com?'':ref)+'</div>';
   });
   document.getElementById('ind_cards').innerHTML=h;
   let t='<table><thead><tr><th>Mes</th>'+['opp','pipe','po','bill'].map(i=>'<th>'+INAMES[i]+'</th>').join('')+'</tr></thead><tbody>';
@@ -460,6 +486,7 @@ function renderInd(){
     ['opp','pipe','po','bill'].forEach(i => {
       if(!x.val){t+='<td><span class="pill n">—</span></td>'; return;}
       const vv=valI(x,i), p=x.meta[i]? vv/x.meta[i]*100 : null, hj = x.hoja && x.hoja[i]!==undefined ? ' <span class="muted small">(hoja '+x.hoja[i]+'%)</span>' : '';
+      if(st.com){t+='<td><span class="pill n">'+fmtI(i,vv)+'</span></td>'; return;}
       t+='<td title="'+fmtI(i,vv)+' de '+fmtI(i,x.meta[i])+'"><span class="pill '+colorI(i,p)+'">'+(p===null?'—':Math.round(p)+'%')+'</span>'+hj+'</td>';
     });
     t+='</tr>';
@@ -1211,6 +1238,7 @@ function setAnio(a){
   if(st.empName===null) st.emp=defaultEmp(); else st.emp=D.empresas.indexOf(st.empName);
   if(st.emp>=0) st.empName=D.empresas[st.emp]; else if(st.empName===null) st.empName='';
   if(st.mes>12) st.mes=0;
+  if(st.com && !comLista().some(k => nrm(k)===nrm(st.com))) st.com='';
   renderCtrl(); initMetas(); estMetas(); initAdm(); initDis(); disEst(); initPro(); proEst(); render();
 }
 document.querySelectorAll('#monseg button').forEach(b => b.onclick = () => {st.mon=b.dataset.c; render();});

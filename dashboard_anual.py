@@ -653,7 +653,7 @@ function modCuentas(lado,pref,tit,n){
   return h;
 }
 function abMap(lado){
-  const m=new Map(), F=['ab','fav','nv','d30','d60','d90','d91','pond','base','n'];
+  const m=new Map(), F=['ab','fav','apl','ant','antsob','nv','d30','d60','d90','d91','pond','base','n'];
   admNombres().forEach(nm => {
     const L=((D.adm.abiertos||{})[nm]||{})[lado]||[];
     L.forEach(r => {let a=m.get(r.t); if(!a){a={t:r.t,docs:[]}; F.forEach(f=>a[f]=0); m.set(r.t,a);} F.forEach(f=>a[f]+=r[f]); a.docs=a.docs.concat(r.docs);});
@@ -676,32 +676,86 @@ function modTerceros(g,tit,lado,n){
   h+='</tbody></table></div>'+(rows.length>(n||15)?'<div class="muted small">+ '+(rows.length-(n||15))+' terceros más</div>':'');
   return h;
 }
-function modDeben(){
-  const k=admK(), cat=new Map(), ter=new Map(), nm=admNombres();
-  nm.forEach(n => {
-    const M=D.adm.m[n];
-    (M.deb_ctas||[]).forEach(c => {const v=c[3][k]; if(!v) return; if(c[0]==='imp' && v<=0) return;
-      const key=c[0]+'\u0001'+c[1]+'\u0001'+c[2]; cat.set(key,(cat.get(key)||0)+v);});
-    ((M.terc||{}).deb||[]).forEach(r => {const x=r[1][k]; if(x) ter.set(r[0],(ter.get(r[0])||0)+x);});
-    ((M.terc||{}).imp||[]).forEach(r => {const x=r[1][k]; if(x>0) ter.set(r[0],(ter.get(r[0])||0)+x);});
+const EXPC=new Set(), DEBC=new Set(['prov','fin','antc','lab','ret','prv','otp']);
+const CONC={
+  cli:'Clientes (cartera, neta de deterioro)', ant:'Anticipos y avances entregados (proveedores y otros)', trab:'Trabajadores y socios',
+  otr:'Otros deudores', vinc:'Empresas vinculadas (entre las empresas del grupo)', imp:'Impuestos: posición neta con la DIAN (IVA, renta, retenciones a favor)',
+  prov:'Proveedores y cuentas por pagar', fin:'Obligaciones financieras (bancos, tarjetas, particulares)', antc:'Anticipos recibidos de clientes y otros pasivos',
+  lab:'Obligaciones laborales y seguridad social', ret:'Retenciones por pagar (DIAN y municipios)', prv:'Provisiones y estimados', otp:'Otros pasivos'};
+function concDe(cod,t,vs){
+  const c2=cod.slice(0,2), c4=cod.slice(0,4);
+  if(c2==='24' || c4==='1355') return 'imp';
+  if(vs.has(t)) return 'vinc';
+  if(c2==='13'){
+    if(c4==='1305' || c4==='1399') return 'cli';
+    if(cod.slice(0,6)==='133015' || c4==='1365') return 'trab';
+    if(c4==='1330') return 'ant';
+    return 'otr';
+  }
+  if(c2==='21') return 'fin';
+  if(c2==='22' || c4==='2335') return 'prov';
+  if(c2==='25' || c4==='2370') return 'lab';
+  if(c4==='2365' || c4==='2367' || c4==='2368') return 'ret';
+  if(c2==='26') return 'prv';
+  if(c2==='28') return 'antc';
+  return 'otp';
+}
+function posiciones(){
+  const k=admK(), nm=admNombres(), names={}, C={}, T=new Map();
+  const vs=new Set((D.adm.vinc||[]).filter(n => nm.length>1 || nm[0]!==n));
+  nm.forEach(n => { const M=D.adm.m[n]; Object.assign(names,M.nmcod||{});
+    (M.at||[]).forEach(r => {
+      const v=r[2][k]||0; if(!v) return;
+      const c=concDe(r[0],r[1],vs), o=C[c]||(C[c]={tot:0,hij:new Map()}), pc=(c==='imp'||c==='vinc'), key=pc? r[0] : r[1];
+      o.tot+=v;
+      const h=o.hij.get(key)||{l: pc ? r[0]+' '+(names[r[0]]||'') : r[1], v:0}; h.v+=v; o.hij.set(key,h);
+      if(c!=='imp') T.set(r[1],(T.get(r[1])||0)+v);
+    }); });
+  return {C,T,k};
+}
+function tablaPos(P,lado){
+  const sg = lado==='cob' ? 1 : -1;
+  const filas=Object.keys(P.C).map(c => ({c, v:P.C[c].tot*sg, o:P.C[c]})).filter(x => x.v>1000).sort((a,b)=>b.v-a.v);
+  const tot=filas.reduce((a,x)=>a+x.v,0);
+  let h='<div class="ed"><table><thead><tr><th>Concepto</th><th>Saldo</th><th>%</th></tr></thead><tbody>';
+  if(!filas.length) h+='<tr><td colspan="3" class="muted">Sin saldos.</td></tr>';
+  filas.forEach(x => {
+    const key=lado+'|'+x.c, ab=EXPC.has(key);
+    h+='<tr class="pc'+(ab?' sel':'')+'" data-k="'+key+'" style="cursor:pointer"><td style="text-align:left">'+(ab?'▾ ':'▸ ')+esc(CONC[x.c])+((lado==='cob' && DEBC.has(x.c)) ? ' <span class="down small">— saldo débito en cuentas del pasivo (revisar)</span>' : (lado==='deb' && !DEBC.has(x.c) && x.c!=='imp' && x.c!=='vinc') ? ' <span class="down small">— saldo crédito en cuentas del activo (pagos sin aplicar)</span>' : '')+'</td><td>'+cop(x.v)+'</td><td>'+(tot? pf.format(x.v/tot*100):'—')+'%</td></tr>';
+    if(ab){
+      const hs=[...x.o.hij.values()].sort((a,b)=>Math.abs(b.v)-Math.abs(a.v)), n=12;
+      h+='<tr><td colspan="3" style="padding:0"><table class="sub"><tbody>'+hs.slice(0,n).map(y => '<tr><td style="text-align:left" title="'+esc(y.l)+'">'+esc(y.l)+'</td><td class="'+((y.v*sg)<0?'down':'')+'">'+cop(y.v*sg)+'</td></tr>').join('')+
+         (hs.length>n?'<tr><td colspan="2" class="muted small">+ '+(hs.length-n)+' más</td></tr>':'')+'</tbody></table></td></tr>';
+    }
   });
-  const crows=[...cat.entries()].sort((a,b)=>b[1]-a[1]), ctot=crows.reduce((a,x)=>a+x[1],0);
-  const trows=[...ter.entries()].filter(r => r[1]>0).sort((a,b)=>b[1]-a[1]), ttot=trows.reduce((a,x)=>a+x[1],0);
-  const ab=abMap('cxc');
-  let h='<h2 class="h2s">¿Quién nos debe?</h2><div class="small muted">Saldos a favor de la empresa a fin de '+ML[k]+': cartera de clientes, anticipos entregados, impuestos a favor (IVA, retenciones, saldos a favor con la DIAN), cuentas por cobrar a trabajadores/socios y deudores varios. Total · <b>'+cop(ctot)+'</b></div>';
-  h+='<div class="grid2"><div><h3>Por concepto (cuenta contable)</h3>';
-  if(!crows.length) h+='<div class="muted small">Sin saldos.</div>';
-  else h+='<div class="ed"><table><thead><tr><th>Código</th><th>Cuenta</th><th>Saldo</th><th>%</th></tr></thead><tbody>'+
-    crows.slice(0,25).map(r => {const p=r[0].split('\u0001'); return '<tr><td>'+esc(p[1])+'</td><td style="text-align:left">'+esc(p[2])+(p[0]==='imp'?' <span class="muted small">(impuesto a favor)</span>':'')+'</td><td>'+cop(r[1])+'</td><td>'+(ctot? pf.format(r[1]/ctot*100):'—')+'%</td></tr>';}).join('')+
-    '</tbody></table></div>'+(crows.length>25?'<div class="muted small">+ '+(crows.length-25)+' cuentas más</div>':'');
-  h+='</div><div><h3>Por tercero · '+cop(ttot)+'</h3>';
-  if(!trows.length) h+='<div class="muted small">Sin saldos.</div>';
-  else h+='<div class="ed"><table><thead><tr><th>Tercero</th><th>Saldo</th><th>%</th><th>Vencido hoy (cartera)</th><th>Mora prom.</th></tr></thead><tbody>'+
-    trows.slice(0,20).map(r => {const a=ab.get(r[0]), v=a? a.d30+a.d60+a.d90+a.d91 : 0;
-      return '<tr><td title="'+esc(r[0])+'">'+esc(r[0])+'</td><td>'+cop(r[1])+'</td><td>'+(ttot? pf.format(r[1]/ttot*100):'—')+'%</td><td>'+(a? cop(v):'—')+'</td><td>'+(a && a.base? nf.format(Math.round(a.pond/a.base))+' d':'—')+'</td></tr>';}).join('')+
-    '</tbody></table></div>'+(trows.length>20?'<div class="muted small">+ '+(trows.length-20)+' terceros más</div>':'');
-  h+='</div></div><div class="small muted" style="margin-top:6px">Las cuentas de impuestos (24*) solo se cuentan cuando tienen saldo a favor de la empresa (débito). Si un tercero es la DIAN, su saldo a favor aparece aquí con el nombre con que esté registrado en Odoo.</div>';
-  return h;
+  h+='</tbody><tfoot><tr><td>Total</td><td>'+cop(tot)+'</td><td></td></tr></tfoot></table></div>';
+  return {h,tot};
+}
+function renderPos(){
+  const el=document.getElementById('pos_root'); if(!el) return;
+  const P=posiciones(), A1=tablaPos(P,'cob'), A2=tablaPos(P,'deb');
+  const cv=new Map(); D.adm.vinc && admNombres().forEach(n => (D.adm.m[n].at||[]).forEach(r => {
+    const v=r[2][P.k]||0; if(!v) return; const c4=r[0].slice(0,4), c2=r[0].slice(0,2);
+    if(c4!=='1305' && c2!=='28') return;
+    const o=cv.get(r[1])||{c:0,a:0}; if(c4==='1305') o.c+=v; else o.a-=v; cv.set(r[1],o); }));
+  const cva=[...cv.entries()].filter(r => r[1].a>1e5 && Math.abs(r[1].c)>1e5).sort((a,b)=>b[1].c-a[1].c);
+  const cvH = !cva.length ? '' :
+    '<h3>Clientes con anticipos recibidos: cartera frente a anticipo</h3><div class="small muted">Los anticipos se contabilizan en cuentas 28* (pasivo) y no se cruzan solos con las facturas de la cuenta 1305. Si el anticipo es mayor que la cartera, el saldo es a favor del cliente.</div>'+
+    '<div class="ed"><table><thead><tr><th>Cliente</th><th>Cartera (1305)</th><th>Anticipos recibidos (28*)</th><th>Saldo neto</th><th>Resultado</th></tr></thead><tbody>'+
+    cva.map(r => {const n=r[1].c-r[1].a; return '<tr><td title="'+esc(r[0])+'">'+esc(r[0])+'</td><td>'+cop(r[1].c)+'</td><td>'+cop(r[1].a)+'</td><td class="'+(n<0?'down':'')+'">'+cop(Math.abs(n))+'</td><td>'+(n<0?'Saldo a favor del cliente':'Nos debe')+'</td></tr>';}).join('')+
+    '</tbody></table></div>';
+  const net=[...P.T.entries()].filter(r => Math.abs(r[1])>1000);
+  const pos=net.filter(r => r[1]>0).sort((a,b)=>b[1]-a[1]).slice(0,10), neg=net.filter(r => r[1]<0).sort((a,b)=>a[1]-b[1]).slice(0,10);
+  const mini=(L,sg) => '<div class="ed"><table><thead><tr><th>Tercero</th><th>Saldo neto</th></tr></thead><tbody>'+(L.length? L.map(r => '<tr><td title="'+esc(r[0])+'">'+esc(r[0])+'</td><td>'+cop(r[1]*sg)+'</td></tr>').join('') : '<tr><td colspan="2" class="muted">—</td></tr>')+'</tbody></table></div>';
+  let h='<h2 class="h2s">¿Quién nos debe?</h2><div class="small muted">Saldo a fin de '+ML[P.k]+', agrupado por concepto contable. Cada concepto suma los saldos netos de sus cuentas; haga clic en un concepto para ver el detalle por tercero (o por cuenta en impuestos y empresas vinculadas). Total · <b>'+cop(A1.tot)+'</b></div>'+A1.h+
+    '<div class="dsec" id="ab_cxc_deb"></div>'+
+    '<h2 class="h2s">¿A quién le debemos?</h2><div class="small muted">Mismo criterio. Los valores en rojo son saldos contrarios (por ejemplo, pagos o anticipos sin aplicar). Total · <b>'+cop(A2.tot)+'</b></div>'+A2.h+
+    '<div class="dsec" id="ab_cxp_deb"></div>'+
+    cvH+'<h2 class="h2s">Posición neta por tercero</h2><div class="small muted">Suma de todo lo que el tercero nos debe menos lo que le debemos (sin impuestos). Un mismo tercero puede ser a la vez cliente y proveedor o tener anticipos.</div>'+
+    '<div class="grid2"><div><h3>Nos deben (neto)</h3>'+mini(pos,1)+'</div><div><h3>Les debemos (neto)</h3>'+mini(neg,-1)+'</div></div>';
+  el.innerHTML=h;
+  el.querySelectorAll('tr.pc').forEach(tr => tr.onclick = () => {const k=tr.dataset.k; if(EXPC.has(k)) EXPC.delete(k); else EXPC.add(k); renderPos();});
+  renderAb('cxc','ab_cxc_deb'); renderAb('cxp','ab_cxp_deb');
 }
 function renderAb(lado,id){
   const el=document.getElementById(id||('ab_'+lado)); if(!el) return;
@@ -709,7 +763,7 @@ function renderAb(lado,id){
   const T=f=>rows.reduce((a,r)=>a+r[f],0), ab=T('ab'), venc=T('d30')+T('d60')+T('d90')+T('d91');
   const tit = lado==='cxc' ? 'Cartera de clientes: quién nos debe y cuántos días de mora' : 'Cuentas por pagar: a quién se le debe y cuántos días de mora';
   let h='<h3>'+tit+'</h3><div class="small muted">Saldos abiertos a hoy ('+hoy+'). Abierto '+cop(ab)+' · vencido '+cop(venc)+' ('+(ab? Math.round(venc/ab*100):0)+'%) · mora promedio ponderada '+(T('base')? nf.format(Math.round(T('pond')/T('base')))+' d':'—')+
-    ' · saldos a favor/anticipos aparte: '+cop(T('fav'))+'. Haga clic en un tercero para ver sus facturas.</div>';
+    ' · pagos/anticipos sin conciliar aplicados a las facturas más antiguas: '+cop(T('apl'))+(T('ant')? ' · anticipos recibidos de clientes (cuentas 28*) aplicados a sus facturas: '+cop(T('ant')) : '')+(T('antsob')? ' · anticipo que sobra a favor del cliente: '+cop(T('antsob')) : '')+(T('fav')? ' · saldo a favor del tercero que queda: '+cop(T('fav')) : '')+'. Haga clic en un tercero para ver sus facturas.</div>';
   if(!rows.length){el.innerHTML=h+'<div class="muted small">Sin saldos abiertos.</div>'; return;}
   h+='<div class="ed"><table><thead><tr><th>Tercero</th><th>Abierto</th><th>Vencido</th><th>Mora prom.</th><th>No vencido</th><th>1–30 d</th><th>31–60 d</th><th>61–90 d</th><th>+90 d</th><th>Fact.</th></tr></thead><tbody>';
   rows.slice(0,40).forEach(r => {
@@ -776,20 +830,18 @@ function detalleAdm(i,k){
   const sec = (id,html) => '<div class="dsec">'+html+'</div>';
   const ph = l => '<div class="dsec" id="ab_'+l+'"></div>';
   switch(i){
-    case 'razon': return sec('c',modComposicion(k,false))+
-      sec('p','<h2 class="h2s">¿A quién se le debe?</h2><div class="grid2"><div>'+modTerceros('prov','Proveedores y cuentas por pagar','cxp',12)+'</div><div>'+modTerceros('fin','Obligaciones financieras (bancos, tarjetas, particulares)',null,12)+'</div></div>'+
-        '<div style="margin-top:12px">'+modTerceros('otp','Otros pasivos (anticipos recibidos, impuestos, nómina, retenciones)',null,12)+'</div>')+ph('cxp')+
-      sec('a',modCuentas('pas','','Pasivo por cuenta contable',25));
+    case 'razon': return sec('c',modComposicion(k,false))+sec('a',modCuentas('pas','','Pasivo por cuenta contable',25))+
+      '<div class="dsec muted small">El detalle de a quién se le debe (proveedores, bancos, particulares, anticipos) está en la sección «¿A quién le debemos?» más abajo.</div>';
     case 'apal': return sec('c',modComposicion(k,true))+sec('a',modCuentas('pas','','Pasivo por cuenta contable',20))+
-      sec('p','<h2 class="h2s">¿A quién se le debe?</h2><div class="grid2"><div>'+modTerceros('prov','Proveedores y cuentas por pagar','cxp',10)+'</div><div>'+modTerceros('fin','Obligaciones financieras',null,10)+'</div></div>');
+      '<div class="dsec muted small">El detalle por tercero está en las secciones «¿Quién nos debe?» y «¿A quién le debemos?» más abajo.</div>';
     case 'fin': return sec('c','<div class="grid2"><div>'+modCuentas('pas','21','Obligaciones financieras por cuenta',30)+'</div><div>'+modTerceros('fin','¿A quién se le debe? (por tercero)',null,20)+'</div></div>');
-    case 'rot': case 'cobro': return sec('t',modTerceros('cxc','Cartera por cliente','cxc',15))+ph('cxc');
-    case 'pago': return sec('t',modTerceros('prov','Cuentas por pagar por proveedor','cxp',15))+ph('cxp');
-    case 'ciclo': return sec('i',modCuentas('act','14','Inventarios por cuenta contable (14*)',15))+ph('cxc');
+    case 'rot': case 'cobro': return sec('t',modTerceros('cxc','Cartera por cliente','cxc',15))+'<div class="dsec muted small">La mora por factura de cada cliente está en «¿Quién nos debe?» más abajo.</div>';
+    case 'pago': return sec('t',modTerceros('prov','Cuentas por pagar por proveedor',null,15))+'<div class="dsec muted small">La mora por factura de cada proveedor está en «¿A quién le debemos?» más abajo.</div>';
+    case 'ciclo': return sec('i',modCuentas('act','14','Inventarios por cuenta contable (14*)',15));
     default: return '<div class="dsec muted small">Este indicador se digita a mano: use “Editar metas” → fila de Bienestar para registrar el % cumplido de cada mes.</div>';
   }
 }
-function lados(i){return {razon:['cxp'],apal:[],fin:[],rot:['cxc'],cobro:['cxc'],pago:['cxp'],ciclo:['cxc'],bienestar:[]}[i]||[];}
+function lados(i){return [];}
 
 function renderAdm(){
   const root=document.getElementById('adm_root');
@@ -810,7 +862,7 @@ function renderAdm(){
   const hjI = hj && hj[i]!==undefined && st.emp>=0 && /diforma/i.test(D.empresas[st.emp]||'') ? ' · según la hoja: '+admFmt(i,hj[i],false) : '';
   h+='<div class="dp"><h2 class="h2s">'+ANAMES[i]+' · detalle de '+ML[k]+' '+D.anio+'</h2><div class="small muted">'+AFORM[i]+'<br>Meta '+(A.tipo[i]==='min'?'≥ ':'≤ ')+admFmt(i,AMETA[i],false)+' · valor '+admFmt(i,v[i],v.patneg)+hjI+'</div>'+
      (i==='bienestar' ? '' : '<div id="adm_chart" style="margin-top:8px">'+serieChart(i)+'</div>')+compTable(i)+detalleAdm(i,k)+'</div>';
-  h+='<div class="dp">'+modDeben()+'<div class="dsec" id="ab_cxc_deb"></div></div>';
+  h+='<div class="dp" id="pos_root"></div>';
   h+='<h2>Resumen de los 8 indicadores por mes</h2>';
   let t='<table><thead><tr><th>Mes</th>'+AK.map(x=>'<th title="'+ADESC[x]+'">'+ANAMES[x].replace(' (semestral)','')+'</th>').join('')+'</tr></thead><tbody>';
   for(let j=0;j<12;j++){
@@ -827,7 +879,7 @@ function renderAdm(){
   root.querySelectorAll('tr[data-m]').forEach(r => r.onclick = () => {st.mes=+r.dataset.m; render();});
   root.querySelectorAll('.ahit').forEach(r => r.onclick = () => {st.mes=+r.dataset.m; render();});
   lados(i).forEach(l => renderAb(l));
-  renderAb('cxc','ab_cxc_deb');
+  renderPos();
 }
 function initAdm(){
   AKEY='diforma_metas_admin_'+D.anio;

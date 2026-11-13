@@ -59,6 +59,20 @@ def _id(v):
     return v[0] if isinstance(v, (list, tuple)) and v else None
 
 
+def _tipo_puc(codigo, tipo):
+    """Normaliza el tipo de cuenta segun el PUC colombiano: la clase (primer digito del codigo) manda.
+    1 activo, 2 pasivo, 3 patrimonio, 4 ingresos, 5/6/7 gastos y costos. En Odoo hay cuentas con el
+    tipo mal configurado (p.ej. prestaciones sociales 25* como 'activo'); se clasifican por su codigo.
+    Si el tipo de Odoo ya es de la misma familia se respeta (conserva 'por cobrar', 'por pagar', 'costo directo')."""
+    c = (codigo or "")[:1]
+    familias = {"1": "asset", "2": "liability", "3": "equity", "4": "income", "5": "expense", "6": "expense", "7": "expense"}
+    fam = familias.get(c)
+    if not fam or (tipo or "").startswith(fam):
+        return tipo
+    return {"asset": "asset_current", "liability": "liability_current", "equity": "equity",
+            "income": "income", "expense": "expense"}[fam]
+
+
 def _claves(codigo, tipo, cfg):
     """Que acumuladores toca una linea contable (segun cuenta)."""
     ks = []
@@ -128,13 +142,14 @@ def calcular(odoo, anio, cfg, avisos):
     gpref = defaultdict(lambda: defaultdict(lambda: [0.0] * 13))         # cid -> (lado, prefijo2) -> [0=base, 1..12]
     cta = defaultdict(lambda: defaultdict(lambda: [0.0] * 13))           # cid -> (lado, id_cuenta) -> [0=base, 1..12]
     ter = defaultdict(lambda: defaultdict(lambda: [0.0] * 13))           # cid -> (grupo, tercero) -> [0=base, 1..12]
-    dct = defaultdict(lambda: defaultdict(lambda: [0.0] * 13))           # cid -> (tipo, id_cuenta) -> [0=base, 1..12] (deudores / impuestos a favor)
-    pdeb = tuple(cfg.get("deudores_prefijos", ["13"]))
-    pimp = tuple(cfg.get("impuestos_prefijos", ["24"]))
+    at = defaultdict(lambda: defaultdict(lambda: [0.0] * 13))            # cid -> (codigo, tercero) -> [0=base, 1..12]
+    nmcod = {}                                                           # codigo -> nombre de la cuenta
+    CLASES_AT = ("13", "21", "22", "23", "24", "25", "26", "28")          # cuentas con terceros: quien nos debe / a quien debemos
     for l in lineas:
         cid = _id(l["company_id"])
         aid = _id(l["account_id"])
         codigo, tipo = cuentas.get((cid, aid), ("", tipos.get(aid, "")))
+        tipo = _tipo_puc(codigo, tipo)
         ks = _claves(codigo, tipo, cfg)
         idx = 0 if l["date"] < ini else int(l["date"][5:7])
         bal = l["balance"]
@@ -159,13 +174,9 @@ def calcular(odoo, anio, cfg, avisos):
             g = "cxc"
         if g:
             ter[cid][(g, _nom(l.get("partner_id")))][idx] += bal
-        # "Quien nos debe": deudores (13*: clientes, anticipos, impuestos a favor, trabajadores, varios)
-        # e impuestos por pagar (24*) que pueden quedar con saldo debito (IVA/retenciones a favor)
-        gd = "deb" if (tipo.startswith("asset") and codigo.startswith(pdeb)) else \
-             "imp" if (tipo.startswith("liability") and codigo.startswith(pimp)) else None
-        if gd:
-            ter[cid][(gd, _nom(l.get("partner_id")))][idx] += bal
-            dct[cid][(gd, aid)][idx] += bal
+        if codigo[:2] in CLASES_AT:
+            at[cid][(codigo, _nom(l.get("partner_id")))][idx] += bal
+            nmcod.setdefault(codigo, nombres.get((cid, aid), ""))
 
     # --- facturas del ano: ventas a credito y compras ---
     vc = defaultdict(lambda: [0.0] * 13)
@@ -223,29 +234,61 @@ def calcular(odoo, anio, cfg, avisos):
                   ["account_id", "company_id", "partner_id", "move_id", "date", "date_maturity", "amount_residual"])
         cubos = ["nv", "d30", "d60", "d90", "d91"]
         por = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: {
-            "ab": 0.0, "fav": 0.0, "nv": 0.0, "d30": 0.0, "d60": 0.0, "d90": 0.0, "d91": 0.0, "pond": 0.0, "base": 0.0, "docs": []})))
+            "ab": 0.0, "fav": 0.0, "apl": 0.0, "ant": 0.0, "antsob": 0.0, "nv": 0.0, "d30": 0.0, "d60": 0.0, "d90": 0.0, "d91": 0.0, "pond": 0.0, "base": 0.0, "docs": []})))
+        anticipos = defaultdict(dict)                       # empresa -> tercero -> anticipo recibido (28*, saldo acreedor)
+        for cid_, d_ in at.items():
+            for (cod_, t_), arr_ in d_.items():
+                if cod_.startswith("28"):
+                    anticipos[empresas.get(cid_)][t_] = anticipos[empresas.get(cid_)].get(t_, 0.0) - sum(arr_)
+        crudo = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: {"fav": 0.0, "items": []})))
         for r in ab:
             nombre = empresas.get(_id(r["company_id"]))
             lado = "cxc" if tipos.get(_id(r["account_id"]), "") == "asset_receivable" else "cxp"
             v = r["amount_residual"] * (1 if lado == "cxc" else -1)
-            t = por[nombre][lado][_nom(r.get("partner_id"))]
+            t = crudo[nombre][lado][_nom(r.get("partner_id"))]
             if v <= 0:
                 t["fav"] += v
-                continue
-            venc = r["date_maturity"] or r["date"]
-            d = (ahora.date() - datetime.fromisoformat(venc).date()).days
-            c = "nv" if d <= 0 else "d30" if d <= 30 else "d60" if d <= 60 else "d90" if d <= 90 else "d91"
-            t["ab"] += v
-            t[c] += v
-            if d > 0:
-                t["pond"] += v * d
-                t["base"] += v
-            t["docs"].append([_nom(r.get("move_id"), "(sin documento)"), r["date"], venc, round(v)])
-            a = antig.setdefault(nombre, {}).setdefault(lado, {k: 0 for k in cubos + ["pond", "base"]})
-            a[c] += v
-            if d > 0:
-                a["pond"] += v * d
-                a["base"] += v
+            else:
+                t["items"].append((r.get("date_maturity") or r["date"], r["date"], _nom(r.get("move_id"), "(sin documento)"), v))
+        for nombre, lados in crudo.items():
+            for lado, ts in lados.items():
+                for tn, c in ts.items():
+                    # los pagos / anticipos / notas sin conciliar (saldo a favor) se aplican a las facturas mas antiguas
+                    credito = -c["fav"]
+                    aplicado = 0.0
+                    antic = max(anticipos.get(nombre, {}).get(tn, 0.0), 0.0) if lado == "cxc" else 0.0
+                    ant_ap = 0.0
+                    t = por[nombre][lado][tn]
+                    for venc, fecha, doc, v in sorted(c["items"]):
+                        if credito > 0:
+                            usar = min(credito, v)
+                            credito -= usar
+                            aplicado += usar
+                            v -= usar
+                        if antic > 0 and v > 0:        # anticipos recibidos del cliente (28*) aplicados a sus facturas
+                            usar = min(antic, v)
+                            antic -= usar
+                            ant_ap += usar
+                            v -= usar
+                        if v <= 0.5:
+                            continue
+                        d = (ahora.date() - datetime.fromisoformat(venc).date()).days
+                        cb = "nv" if d <= 0 else "d30" if d <= 30 else "d60" if d <= 60 else "d90" if d <= 90 else "d91"
+                        t["ab"] += v
+                        t[cb] += v
+                        if d > 0:
+                            t["pond"] += v * d
+                            t["base"] += v
+                        t["docs"].append([doc, fecha, venc, round(v)])
+                        a = antig.setdefault(nombre, {}).setdefault(lado, {k: 0 for k in cubos + ["pond", "base"]})
+                        a[cb] += v
+                        if d > 0:
+                            a["pond"] += v * d
+                            a["base"] += v
+                    t["fav"] -= credito          # lo que sobra a favor del tercero tras aplicar
+                    t["apl"] += aplicado
+                    t["ant"] += ant_ap
+                    t["antsob"] += antic
         for e in antig.values():
             for a in e.values():
                 for k in a:
@@ -257,12 +300,12 @@ def calcular(odoo, anio, cfg, avisos):
                 for t, d in filas[:60]:
                     docs = sorted(d["docs"], key=lambda x: x[2])[:15]       # los mas antiguos (vencen primero)
                     lista.append({"t": t, "n": len(d["docs"]), "docs": docs,
-                                  **{k: round(d[k]) for k in ("ab", "fav", "nv", "d30", "d60", "d90", "d91", "pond", "base")}})
+                                  **{k: round(d[k]) for k in ("ab", "fav", "apl", "ant", "antsob", "nv", "d30", "d60", "d90", "d91", "pond", "base")}})
                 resto = filas[60:]
                 if resto:
                     lista.append({"t": f"(otros {len(resto)} terceros)", "n": 0, "docs": [],
                                   **{k: round(sum(d[k] for _, d in resto)) for k in
-                                     ("ab", "fav", "nv", "d30", "d60", "d90", "d91", "pond", "base")}})
+                                     ("ab", "fav", "apl", "ant", "antsob", "nv", "d30", "d60", "d90", "d91", "pond", "base")}})
                 abiertos.setdefault(nombre, {})[lado] = lista
     except (RuntimeError, requests.RequestException, KeyError, ValueError) as e:
         avisos.append("Administrativa: no se pudo calcular el detalle de saldos abiertos: " + str(e)[:200])
@@ -302,16 +345,23 @@ def calcular(odoo, anio, cfg, avisos):
                 ctas.append([lado, cuentas.get((cid, aid), ("", ""))[0], nombres.get((cid, aid), ""), v])
         ctas.sort(key=lambda x: -abs(next((y for y in reversed(x[3]) if y is not None), 0)))
         ctas = [c for c in ctas if c[0] == "act"][:60] + [c for c in ctas if c[0] == "pas"][:60]
-        dctas = []
-        for (gd, aid), arr in dct[cid].items():
+        filas_at = []
+        for (cod, t), arr in at[cid].items():
             v = cum13(arr, 1)
-            if any(abs(x or 0) > 1000 for x in v):
-                dctas.append([gd, cuentas.get((cid, aid), ("", ""))[0], nombres.get((cid, aid), ""), v])
-        dctas.sort(key=lambda x: -max(abs(y or 0) for y in x[3]))
-        dctas = dctas[:80]
+            m = max(abs(y or 0) for y in v)
+            if m > 1000:
+                filas_at.append([cod, t, [None if y is None else round(y) for y in v], m])
+        filas_at.sort(key=lambda x: -x[3])
+        top_at, resto_at = filas_at[:600], filas_at[600:]
+        agr = defaultdict(lambda: [0.0] * 12)
+        for cod, t, v, m in resto_at:
+            for k in range(12):
+                agr[cod][k] += v[k] or 0
+        atl = [[c, t, v] for c, t, v, m in top_at]
+        atl += [[cod, f"(otros terceros de {cod})", [round(a[k]) for k in range(12)]] for cod, a in agr.items()]
         terc = {}
-        for g in ("fin", "prov", "otp", "cxc", "deb", "imp"):
-            sg = -1 if g in ("fin", "prov", "otp") else 1
+        for g in ("fin", "prov", "otp", "cxc"):
+            sg = 1 if g == "cxc" else -1
             filas = [(t, cum13(arr, sg)) for (gg, t), arr in ter[cid].items() if gg == g]
             filas = [(t, v) for t, v in filas if any(abs(x or 0) > 1000 for x in v)]
             filas.sort(key=lambda x: -max(abs(y or 0) for y in x[1]))
@@ -328,7 +378,7 @@ def calcular(odoo, anio, cfg, avisos):
             "inv": acum(cid, "inv"),
             "vc": flujo(vc[cid]), "comp": flujo(comp[cid]), "cogs": flujo(cogs[cid]),
             "pa": flujo(pa[cid]), "pd": flujo(pd[cid]),
-            "grp": grp, "cuentas": ctas, "deb_ctas": dctas, "terc": terc,
+            "grp": grp, "cuentas": ctas, "terc": terc, "at": atl, "nmcod": {c: nmcod.get(c, "") for c in {r[0] for r in atl}},
         }
 
     # dias transcurridos del ano hasta el cierre de cada mes (o hasta hoy en el mes en curso)
@@ -343,7 +393,7 @@ def calcular(odoo, anio, cfg, avisos):
     manual = cfg.get("manual", {}).get("bienestar", {}).get(str(anio), [None] * 12)
     return {
         "ok": True, "ultimo": ultimo, "empresas": list(datos_emp), "m": datos_emp, "dias": dias,
-        "hoy": ahora.date().isoformat(),
+        "hoy": ahora.date().isoformat(), "vinc": list(datos_emp),
         "meta": cfg["metas"], "tipo": cfg["tipo"],
         "amarillo_max": cfg.get("amarillo_max", 1.25), "amarillo_min": cfg.get("amarillo_min", 0.7),
         "manual_bienestar": (manual + [None] * 12)[:12],

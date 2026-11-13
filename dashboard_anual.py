@@ -800,9 +800,12 @@ function xlsxBlob(hojas){
   return zipStore(files);
 }
 function _rango(dm){return dm<=0?'No vencido':dm<=30?'1–30 d':dm<=60?'31–60 d':dm<=90?'61–90 d':'+90 d';}
+function _slugArchivo(s){return String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\./g,'').replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'');}
 function exportarExcel(lados){
   const A=D.adm, hoy=A.hoy, noms=admNombres(), multi=noms.length>1, hojas=[];
   const ped={cxp:['Cuentas por pagar','Proveedores / acreedores'],cxc:['Cartera clientes','Cliente']};
+  const empTxt=(multi?'Empresas: ':'Empresa: ')+noms.join(', ');
+  const pre=t=>[[empTxt],[t+' · saldos abiertos al '+hoy+' · cifras en COP'],[]];
   (lados||['cxp','cxc']).forEach(lado => {
     const rs=[], ds=[];
     noms.forEach(nm => (((A.abiertos||{})[nm]||{})[lado]||[]).forEach(r => {
@@ -812,16 +815,16 @@ function exportarExcel(lados){
     }));
     rs.sort((a,b)=>b[multi?2:1]-a[multi?2:1]); ds.sort((a,b)=>a[multi?0:0]<b[0]?-1:a[0]>b[0]?1:(a[multi?4:3]<b[multi?4:3]?-1:1));
     const E=multi?[{t:'Empresa',w:20}]:[], T=ped[lado][1];
-    hojas.push({nombre:'Resumen '+ped[lado][0],cols:[...E,{t:T,w:42},{t:'Saldo abierto',w:16},{t:'Vencido',w:16},{t:'Mora prom. (días)',w:12},{t:'No vencido',w:16},{t:'1–30 d',w:16},{t:'31–60 d',w:16},{t:'61–90 d',w:16},{t:'+90 d',w:16},{t:'Facturas abiertas',w:10},{t:'Pagos sin conciliar aplicados',w:18},{t:'Saldo a favor restante',w:18}].concat(lado==='cxc'?[{t:'Anticipos aplicados',w:16},{t:'Anticipo sobrante a favor del cliente',w:20}]:[]),filas:rs});
-    hojas.push({nombre:'Detalle '+ped[lado][0],cols:[...E,{t:T,w:42},{t:'Documento',w:24},{t:'Fecha',w:12},{t:'Vence',w:12},{t:'Saldo',w:16},{t:'Días de mora',w:10},{t:'Rango',w:12}],filas:ds});
+    hojas.push({nombre:'Resumen '+ped[lado][0],pre:pre('Resumen '+ped[lado][0].toLowerCase()),top:4,cols:[...E,{t:T,w:42},{t:'Saldo abierto',w:16},{t:'Vencido',w:16},{t:'Mora prom. (días)',w:12},{t:'No vencido',w:16},{t:'1–30 d',w:16},{t:'31–60 d',w:16},{t:'61–90 d',w:16},{t:'+90 d',w:16},{t:'Facturas abiertas',w:10},{t:'Pagos sin conciliar aplicados',w:18},{t:'Saldo a favor restante',w:18}].concat(lado==='cxc'?[{t:'Anticipos aplicados',w:16},{t:'Anticipo sobrante a favor del cliente',w:20}]:[]),filas:rs});
+    hojas.push({nombre:'Detalle '+ped[lado][0],pre:pre('Detalle '+ped[lado][0].toLowerCase()),top:4,cols:[...E,{t:T,w:42},{t:'Documento',w:24},{t:'Fecha',w:12},{t:'Vence',w:12},{t:'Saldo',w:16},{t:'Días de mora',w:10},{t:'Rango',w:12}],filas:ds});
   });
   hojas.push({nombre:'Notas',top:0,cols:[{t:'Nota',w:120}],filas:[
+    [empTxt],
     ['Corte de los saldos abiertos: '+hoy+' (fecha de generación del informe). Cifras en COP.'],
-    ['Empresa(s): '+noms.join(', ')],
     ['Los pagos y anticipos sin conciliar en Odoo se aplican a las facturas más antiguas de cada tercero (FIFO); lo que no alcanza a cubrir queda como saldo a favor.'],
     ['Días de mora = fecha de corte − fecha de vencimiento; 0 si aún no vence.']]});
   const blob=xlsxBlob(hojas), a=document.createElement('a');
-  a.href=URL.createObjectURL(blob); a.download='cartera_y_cuentas_por_pagar_'+hoy+'.xlsx';
+  a.href=URL.createObjectURL(blob); a.download=({cxp:'cuentas_por_pagar',cxc:'cartera_clientes'}[(lados||[]).length===1?lados[0]:'']||'cartera_y_cuentas_por_pagar')+'_'+noms.map(_slugArchivo).join('_y_')+'_'+hoy+'.xlsx';
   document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},1500);
 }
 function renderAb(lado,id){

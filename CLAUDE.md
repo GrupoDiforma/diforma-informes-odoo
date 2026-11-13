@@ -29,6 +29,9 @@ https://grupodiforma.github.io/diforma-informes-odoo/ por GitHub Actions (cada 6
 - `apps_script/Codigo.gs` + `nube.json`: metas compartidas en Google Sheets (escritura con PIN).
 
 ## Patrón del dashboard
+- Diseño V1.1: barra roja superior (`.topbar`, "GRUPO DIFORMA S.A.S · Dashboard de Indicadores"), panel blanco sobre fondo gris
+  claro, paleta con variables CSS (`--rojo` #d32f2f, `--negro`, `--gris`, `--linea`, `--suave`), título con ícono (`.tit`),
+  fuente del sistema y gráficos en gris/negro con el mes seleccionado en rojo.
 - Selectores globales: año, periodo (año completo o mes) y empresa (por defecto Grupo Diforma S.A.S; opción todas).
 - Cada pestaña: tarjetas con semáforo, tabla de 12 meses, panel de detalle por indicador, metas editables.
 - Metas: fuente fija en `metas_<area>.json`; ediciones en `localStorage` (`diforma_metas_<area>_<año>`) o en la nube (Apps Script).

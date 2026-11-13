@@ -297,11 +297,11 @@ def calcular(odoo, anio, cfg, avisos):
             for lado, ts in lados.items():
                 filas = sorted(ts.items(), key=lambda x: -x[1]["ab"])
                 lista = []
-                for t, d in filas[:60]:
-                    docs = sorted(d["docs"], key=lambda x: x[2])[:15]       # los mas antiguos (vencen primero)
+                for t, d in filas:
+                    docs = sorted(d["docs"], key=lambda x: x[2])       # todas, las que vencen primero al inicio
                     lista.append({"t": t, "n": len(d["docs"]), "docs": docs,
                                   **{k: round(d[k]) for k in ("ab", "fav", "apl", "ant", "antsob", "nv", "d30", "d60", "d90", "d91", "pond", "base")}})
-                resto = filas[60:]
+                resto = []
                 if resto:
                     lista.append({"t": f"(otros {len(resto)} terceros)", "n": 0, "docs": [],
                                   **{k: round(sum(d[k] for _, d in resto)) for k in

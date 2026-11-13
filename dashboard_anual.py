@@ -222,7 +222,7 @@ pueden diferir por el efecto de la TRM. Fuente: Odoo 19, solo lectura.</div>
 </section>
 <section id="tab_adm" style="display:none">
 <h2 id="t_adm">Indicadores del área administrativa</h2>
-<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas_adm">✎ Editar metas</button> <span class="muted" id="adm_est"></span></div>
+<div class="small" style="margin:4px 0"><button class="chip" id="btn_metas_adm">✎ Editar metas</button> <button class="chip" id="btn_xl_adm">⬇ Exportar cartera y cuentas por pagar a Excel</button> <span class="muted" id="adm_est"></span></div>
 <div id="adm_edit" style="display:none"></div>
 <div id="adm_root"></div>
 </section>
@@ -757,12 +757,79 @@ function renderPos(){
   el.querySelectorAll('tr.pc').forEach(tr => tr.onclick = () => {const k=tr.dataset.k; if(EXPC.has(k)) EXPC.delete(k); else EXPC.add(k); renderPos();});
   renderAb('cxc','ab_cxc_deb'); renderAb('cxp','ab_cxp_deb');
 }
+
+// ---- exportar a Excel (XLSX minimo generado en el navegador) ----
+const _crcT=(()=>{const t=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function _crc(b){let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=_crcT[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+function zipStore(files){
+  const enc=new TextEncoder(), parts=[], cen=[]; let off=0;
+  const u16=v=>[v&255,(v>>8)&255], u32=v=>[v&255,(v>>8)&255,(v>>16)&255,(v>>>24)&255];
+  files.forEach(f=>{
+    const nm=enc.encode(f[0]), d=enc.encode(f[1]), c=_crc(d);
+    const lh=[0x50,0x4b,3,4,...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0x21),...u32(c),...u32(d.length),...u32(d.length),...u16(nm.length),...u16(0)];
+    parts.push(new Uint8Array(lh),nm,d);
+    cen.push(new Uint8Array([0x50,0x4b,1,2,...u16(20),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0x21),...u32(c),...u32(d.length),...u32(d.length),...u16(nm.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(off)]),nm);
+    off+=lh.length+nm.length+d.length;
+  });
+  let cs=0; cen.forEach(x=>cs+=x.length);
+  const end=new Uint8Array([0x50,0x4b,5,6,0,0,0,0,...u16(files.length),...u16(files.length),...u32(cs),...u32(off),0,0]);
+  return new Blob([...parts,...cen,end],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+function _xe(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'');}
+function _colL(i){let s='';i++;while(i>0){const m=(i-1)%26;s=String.fromCharCode(65+m)+s;i=Math.floor((i-1)/26);}return s;}
+// hoja: {nombre, cols:[{t:'titulo',w:ancho,f:'n'|'t'|'d'}], filas:[[...]]}; estilos: 1 encabezado, 2 numero, 3 texto
+function xlsxBlob(hojas){
+  const ws=hojas.map(h=>{
+    let x='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="'+(h.top||1)+'" topLeftCell="A'+((h.top||1)+1)+'" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+
+      h.cols.map((c,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+(c.w||14)+'" customWidth="1"/>').join('')+'</cols><sheetData>';
+    const cel=(v,r,c,st)=>{const ref=_colL(c)+r; if(v===null||v===undefined||v==='') return ''; return typeof v==='number'&&isFinite(v)? '<c r="'+ref+'" s="'+(st||2)+'"><v>'+v+'</v></c>' : '<c r="'+ref+'" s="'+(st===1?1:3)+'" t="inlineStr"><is><t xml:space="preserve">'+_xe(v)+'</t></is></c>';};
+    let r=1;
+    (h.pre||[]).forEach(f=>{x+='<row r="'+r+'">'+f.map((v,c)=>cel(v,r,c,3)).join('')+'</row>'; r++;});
+    x+='<row r="'+r+'">'+h.cols.map((c,i)=>cel(c.t,r,i,1)).join('')+'</row>'; const hr=r; r++;
+    h.filas.forEach(f=>{x+='<row r="'+r+'">'+f.map((v,c)=>cel(v,r,c,2)).join('')+'</row>'; r++;});
+    x+='</sheetData>'+(h.filas.length? '<autoFilter ref="A'+hr+':'+_colL(h.cols.length-1)+(r-1)+'"/>':'')+'</worksheet>';
+    return x;
+  });
+  const files=[
+    ['[Content_Types].xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+hojas.map((h,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>'],
+    ['_rels/.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ['xl/workbook.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+hojas.map((h,i)=>'<sheet name="'+_xe(h.nombre.slice(0,31))+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('')+'</sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+hojas.map((h,i)=>'<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>').join('')+'<Relationship Id="rId'+(hojas.length+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+    ['xl/styles.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="4"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="3" applyNumberFormat="1"/><xf/></cellXfs></styleSheet>']
+  ].concat(ws.map((x,i)=>['xl/worksheets/sheet'+(i+1)+'.xml',x]));
+  return zipStore(files);
+}
+function _rango(dm){return dm<=0?'No vencido':dm<=30?'1–30 d':dm<=60?'31–60 d':dm<=90?'61–90 d':'+90 d';}
+function exportarExcel(lados){
+  const A=D.adm, hoy=A.hoy, noms=admNombres(), multi=noms.length>1, hojas=[];
+  const ped={cxp:['Cuentas por pagar','Proveedores / acreedores'],cxc:['Cartera clientes','Cliente']};
+  (lados||['cxp','cxc']).forEach(lado => {
+    const rs=[], ds=[];
+    noms.forEach(nm => (((A.abiertos||{})[nm]||{})[lado]||[]).forEach(r => {
+      const E=multi?[nm]:[];
+      rs.push([...E,r.t,r.ab,r.d30+r.d60+r.d90+r.d91,r.base?Math.round(r.pond/r.base):0,r.nv,r.d30,r.d60,r.d90,r.d91,r.n,r.apl,r.fav].concat(lado==='cxc'?[r.ant,r.antsob]:[]));
+      r.docs.forEach(d => {const dm=diasEntre(hoy,d[2]); ds.push([...E,r.t,d[0],d[1],d[2],d[3],Math.max(dm,0),_rango(dm)]);});
+    }));
+    rs.sort((a,b)=>b[multi?2:1]-a[multi?2:1]); ds.sort((a,b)=>a[multi?0:0]<b[0]?-1:a[0]>b[0]?1:(a[multi?4:3]<b[multi?4:3]?-1:1));
+    const E=multi?[{t:'Empresa',w:20}]:[], T=ped[lado][1];
+    hojas.push({nombre:'Resumen '+ped[lado][0],cols:[...E,{t:T,w:42},{t:'Saldo abierto',w:16},{t:'Vencido',w:16},{t:'Mora prom. (días)',w:12},{t:'No vencido',w:16},{t:'1–30 d',w:16},{t:'31–60 d',w:16},{t:'61–90 d',w:16},{t:'+90 d',w:16},{t:'Facturas abiertas',w:10},{t:'Pagos sin conciliar aplicados',w:18},{t:'Saldo a favor restante',w:18}].concat(lado==='cxc'?[{t:'Anticipos aplicados',w:16},{t:'Anticipo sobrante a favor del cliente',w:20}]:[]),filas:rs});
+    hojas.push({nombre:'Detalle '+ped[lado][0],cols:[...E,{t:T,w:42},{t:'Documento',w:24},{t:'Fecha',w:12},{t:'Vence',w:12},{t:'Saldo',w:16},{t:'Días de mora',w:10},{t:'Rango',w:12}],filas:ds});
+  });
+  hojas.push({nombre:'Notas',top:0,cols:[{t:'Nota',w:120}],filas:[
+    ['Corte de los saldos abiertos: '+hoy+' (fecha de generación del informe). Cifras en COP.'],
+    ['Empresa(s): '+noms.join(', ')],
+    ['Los pagos y anticipos sin conciliar en Odoo se aplican a las facturas más antiguas de cada tercero (FIFO); lo que no alcanza a cubrir queda como saldo a favor.'],
+    ['Días de mora = fecha de corte − fecha de vencimiento; 0 si aún no vence.']]});
+  const blob=xlsxBlob(hojas), a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='cartera_y_cuentas_por_pagar_'+hoy+'.xlsx';
+  document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},1500);
+}
 function renderAb(lado,id){
   const el=document.getElementById(id||('ab_'+lado)); if(!el) return;
   const hoy=D.adm.hoy, m=abMap(lado), rows=[...m.values()].sort((a,b)=>b.ab-a.ab);
   const T=f=>rows.reduce((a,r)=>a+r[f],0), ab=T('ab'), venc=T('d30')+T('d60')+T('d90')+T('d91');
   const tit = lado==='cxc' ? 'Cartera de clientes: quién nos debe y cuántos días de mora' : 'Cuentas por pagar: a quién se le debe y cuántos días de mora';
-  let h='<h3>'+tit+'</h3><div class="small muted">Saldos abiertos a hoy ('+hoy+'). Abierto '+cop(ab)+' · vencido '+cop(venc)+' ('+(ab? Math.round(venc/ab*100):0)+'%) · mora promedio ponderada '+(T('base')? nf.format(Math.round(T('pond')/T('base')))+' d':'—')+
+  let h='<h3>'+tit+' <button class="chip" data-xl="'+lado+'" style="font-size:12px">⬇ Exportar a Excel</button></h3><div class="small muted">Saldos abiertos a hoy ('+hoy+'). Abierto '+cop(ab)+' · vencido '+cop(venc)+' ('+(ab? Math.round(venc/ab*100):0)+'%) · mora promedio ponderada '+(T('base')? nf.format(Math.round(T('pond')/T('base')))+' d':'—')+
     ' · pagos/anticipos sin conciliar aplicados a las facturas más antiguas: '+cop(T('apl'))+(T('ant')? ' · anticipos recibidos de clientes (cuentas 28*) aplicados a sus facturas: '+cop(T('ant')) : '')+(T('antsob')? ' · anticipo que sobra a favor del cliente: '+cop(T('antsob')) : '')+(T('fav')? ' · saldo a favor del tercero que queda: '+cop(T('fav')) : '')+'. Haga clic en un tercero para ver sus facturas.</div>';
   if(!rows.length){el.innerHTML=h+'<div class="muted small">Sin saldos abiertos.</div>'; return;}
   h+='<div class="ed"><table><thead><tr><th>Tercero</th><th>Abierto</th><th>Vencido</th><th>Mora prom.</th><th>No vencido</th><th>1–30 d</th><th>31–60 d</th><th>61–90 d</th><th>+90 d</th><th>Fact.</th></tr></thead><tbody>';
@@ -780,6 +847,7 @@ function renderAb(lado,id){
   h+='</tbody><tfoot><tr><td>Total</td><td>'+cop(ab)+'</td><td>'+cop(venc)+'</td><td>'+(T('base')? nf.format(Math.round(T('pond')/T('base')))+' d':'—')+'</td>'+
      ['nv','d30','d60','d90','d91'].map(c => '<td>'+cop(T(c))+'</td>').join('')+'<td>'+T('n')+'</td></tr></tfoot></table></div>'+(rows.length>40?'<div class="muted small">+ '+(rows.length-40)+' terceros más (ver archivo de diagnóstico)</div>':'');
   el.innerHTML=h;
+  el.querySelectorAll('[data-xl]').forEach(b => b.onclick = e => {e.stopPropagation(); exportarExcel([b.dataset.xl]);});
   el.querySelectorAll('.ab-r').forEach(tr => tr.onclick = () => {const k=tr.dataset.k; if(EXP.has(k)) EXP.delete(k); else EXP.add(k); renderAb(lado,id);});
 }
 
@@ -1299,6 +1367,7 @@ document.getElementById('btn_metas').onclick = () => {
   const e=document.getElementById('ind_edit'), ab=e.style.display==='none';
   e.style.display=ab?'':'none'; if(ab) renderEdit();
 };
+document.getElementById('btn_xl_adm').onclick = () => exportarExcel(['cxp','cxc']);
 document.getElementById('btn_metas_adm').onclick = () => {
   if(!admOk()) return;
   const e=document.getElementById('adm_edit'), ab=e.style.display==='none';
